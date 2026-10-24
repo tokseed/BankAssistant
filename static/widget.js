@@ -173,6 +173,10 @@ input:focus{outline:0;border-bottom-color:' + COLOR + '}\
       li.appendChild(t);
       li.appendChild(el('span', null, x.doc + ', версия ' + x.version));
       li.appendChild(el('p', null, x.snippet));
+      if (x.id) {
+        var link = el('a', { href: '/#/article/' + encodeURIComponent(x.id), target: '_blank', rel: 'noopener' }, 'Открыть пункт в базе знаний');
+        li.appendChild(link);
+      }
       ul.appendChild(li);
     });
     box.appendChild(ul);

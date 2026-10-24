@@ -1,0 +1,13 @@
+{
+  "enabled": true,
+  "provider": "local_rag",
+  "system_prompt": "prompts/system_ru.md",
+  "limits": {
+    "max_input_chars": null,
+    "max_output_tokens": null,
+    "min_relevance": null,
+    "allowed_topics": [],
+    "blocked_topics": [],
+    "requests_per_minute": null
+  }
+}

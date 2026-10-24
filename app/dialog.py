@@ -12,12 +12,13 @@ import re
 import threading
 import time
 import uuid
+from time import perf_counter
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from .knowledge import KnowledgeBase, stems
+from .knowledge import KnowledgeBase, is_model_refusal, is_prompt_injection, stems
 
 log = logging.getLogger("docgen.dialog")
 
@@ -115,6 +116,8 @@ class Engine:
         answerer,
         ttl: int = 1800,
         max_sessions: int = 2000,
+        vector_search=None,
+        query_logger=None,
     ):
         self.templates = templates
         self.renderer = renderer
@@ -122,6 +125,8 @@ class Engine:
         self.answerer = answerer
         self.ttl = ttl
         self.max_sessions = max_sessions
+        self.vector_search = vector_search
+        self.query_logger = query_logger
         self._sessions: dict[str, Session] = {}
         self._lock = threading.Lock()
         self._tpl_stems = {
@@ -161,6 +166,8 @@ class Engine:
             text = text.strip()
             low = text.lower()
 
+            if is_prompt_injection(text):
+                return self._to_idle(s, "Я не могу изменить правила помощника. Задайте вопрос по инструкции или выберите документ.")
             if low in CANCEL:
                 return self._to_idle(s, "Хорошо, начнём заново. О чём спросить или какой документ подготовить?")
             if s.state == "collect":
@@ -240,19 +247,37 @@ class Engine:
         return best if best and q & self._tpl_stems[best["id"]] else None
 
     def _answer_core(self, s: Session, q: str) -> tuple[list[str], list[dict], str | None]:
-        hits = self.kb.search(q, s.role)
+        started = perf_counter()
+        status = "ok"
+        hits = self.vector_search(q, s.role) if self.vector_search else self.kb.search(q, s.role)
         good = [h for h in hits if h.relevance >= self.kb.min_relevance]
         log.info("answer sid=%s found=%s", s.id[:8], [h.chunk.id for h in good])  # текст запроса не логируем
         if not good:
-            msg = ("В базе знаний нет информации, достаточной для уверенного ответа. "
-                   "Я не буду гадать, чтобы не ввести вас в заблуждение.")
+            chat = getattr(self.answerer, "chat", None)
+            if chat is not None:
+                try:
+                    response = chat(q)
+                    if not is_model_refusal(response):
+                        return [response], [], None
+                except Exception:
+                    log.exception("Общий чат AI недоступен, возвращаю ответ по базе")
+            msg = ("В базе знаний нет информации по этому вопросу. "
+                   "Задайте вопрос по инструкции или выберите документ для подготовки.")
             contact = self.kb.meta.get("support_contact")
             if contact:
                 msg += f"\nЗа разъяснением обратитесь: {contact}."
             return [msg], [], None
         visible = {t["id"] for t in self._visible(s.role)}
         tpl = next((h.chunk.template for h in good if h.chunk.template in visible), None)
-        return [self.answerer.answer(q, good)], [h.public() for h in good], tpl
+        try:
+            answer = self.answerer.answer(q, good)
+        except Exception:
+            status = "error"
+            raise
+        finally:
+            if self.query_logger:
+                self.query_logger(q, good, (perf_counter() - started) * 1000, status)
+        return [answer], [h.public() for h in good], tpl
 
     def _on_idle(self, s: Session, text: str) -> dict:
         low = text.lower()

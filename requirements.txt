@@ -2,3 +2,5 @@ fastapi>=0.110,<1.0
 uvicorn[standard]>=0.29
 docxtpl>=0.16
 python-docx>=1.1
+python-multipart>=0.0.9
+pypdf>=5.0

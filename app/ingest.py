@@ -2,25 +2,60 @@
 
   python -m app.ingest Инструкция_v2.docx --doc "Инструкция по документообороту" --version 2.0
 
-Файл .docx/.txt/.md режется на пункты по нумерации («3.4. Текст…»). Старая версия того же документа
+Файл .pdf/.docx/.txt/.md режется на пункты по нумерации («3.4. Текст…»). Старая версия того же документа
 не удаляется, а получает статус archived: поиск идёт только по active, история сохраняется.
 После загрузки вызовите POST /api/admin/kb/reload (или перезапустите сервис).
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
+import zipfile
+import xml.etree.ElementTree as ET
 from datetime import date
 from pathlib import Path
 
 POINT_RE = re.compile(r"^\s*(\d+(?:\.\d+)*)[.)]?\s+(\S.*)$")
 
 
+def document_slug(document: str) -> str:
+    readable = re.sub(r"[^a-z0-9]+", "", document.lower())
+    digest = hashlib.sha1(document.encode("utf-8")).hexdigest()[:8]
+    return (readable[:8] or "doc") + "-" + digest
+
+
 def read_lines(path: Path) -> list[str]:
+    if path.suffix.lower() == ".pdf":
+        try:
+            from pypdf import PdfReader
+            reader = PdfReader(str(path))
+            return [
+                line
+                for page in reader.pages
+                for line in (page.extract_text() or "").splitlines()
+            ]
+        except (ImportError, OSError, ValueError):
+            raise RuntimeError(f"Не удалось прочитать PDF: {path}") from None
     if path.suffix.lower() == ".docx":
-        from docx import Document
-        return [p.text for p in Document(str(path)).paragraphs]
+        try:
+            from docx import Document
+            return [p.text for p in Document(str(path)).paragraphs]
+        except (KeyError, ValueError):
+            with zipfile.ZipFile(path) as archive:
+                root = ET.fromstring(archive.read("word/document.xml"))
+            namespace = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+            lines = []
+            for paragraph in root.iter(namespace + "p"):
+                parts = []
+                for node in paragraph.iter():
+                    if node.tag == namespace + "t" and node.text:
+                        parts.append(node.text)
+                    elif node.tag == namespace + "tab":
+                        parts.append("\t")
+                lines.append("".join(parts))
+            return lines
     return path.read_text(encoding="utf-8").splitlines()
 
 
@@ -35,6 +70,20 @@ def split_points(lines: list[str]) -> list[tuple[str, str]]:
         elif points:
             points[-1][1] += " " + line.strip()
     return [(n, t) for n, t in points]
+
+
+def split_points_with_locations(lines: list[str]) -> list[tuple[str, str, int]]:
+    """Разбивает текст на пункты и сохраняет номер первой строки каждого пункта."""
+    points: list[list] = []
+    for line_number, line in enumerate(lines, start=1):
+        if not line.strip():
+            continue
+        m = POINT_RE.match(line)
+        if m and not re.fullmatch(r"\d{4}", m[1]):
+            points.append([m[1], m[2].strip(), line_number])
+        elif points:
+            points[-1][1] += " " + line.strip()
+    return [(number, text, location) for number, text, location in points]
 
 
 def title_of(text: str) -> str:
@@ -61,7 +110,7 @@ def main() -> None:
             d["status"] = "archived"
 
     pts = split_points(read_lines(Path(a.file)))
-    slug = re.sub(r"\W+", "", a.doc.lower())[:6] + "-v" + a.version
+    slug = document_slug(a.doc) + "-v" + a.version
     for n, text in pts:
         data["chunks"].append({
             "id": f"{slug}-{n}", "doc": a.doc, "version": a.version, "point": n, "title": title_of(text),
