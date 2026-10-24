@@ -1,0 +1,12 @@
+{
+  "enabled": true,
+  "provider": "openai",
+  "limits": {
+    "max_input_chars": null,
+    "max_output_tokens": null,
+    "min_relevance": null,
+    "allowed_topics": [],
+    "blocked_topics": [],
+    "requests_per_minute": null
+  }
+}
