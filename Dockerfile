@@ -1,8 +1,8 @@
 FROM python:3.12-slim
 ENV PYTHONUNBUFFERED=1 OUTPUT_DIR=/tmp/docgen
 WORKDIR /srv
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.txt requirements-dev.txt ./
+RUN pip install --no-cache-dir -r requirements-dev.txt
 COPY . .
 RUN useradd -m app && chown -R app /srv
 USER app

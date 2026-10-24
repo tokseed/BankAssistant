@@ -116,6 +116,7 @@ def test_ingest_versioning():
     kb = KnowledgeBase(tmp / "chunks.json")
     hit = kb.search("срок согласования", "employee")[0]
     assert hit.chunk.version == "2.0" and "один рабочий день" in hit.chunk.text
+    assert hit.chunk.filename == "v2.txt" and hit.chunk.section == "3.4" and hit.chunk.paragraph == 2
     assert all(h.chunk.version == "2.0" for h in kb.search("срок согласования", "employee"))  # старая версия в архиве
     assert any(c.status == "archived" for c in kb.chunks)
 

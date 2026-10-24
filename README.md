@@ -50,9 +50,9 @@
 ## Запуск
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 uvicorn app.main:app --reload          # http://localhost:8000
-python tests/test_dialog.py            # 10 тестов диалога и базы знаний
+pytest -q                              # диалог, ingestion, RAG и SQL-логирование
 ```
 
 По умолчанию API продолжает использовать встроенный BM25 поиск. Чтобы включить локальный FAISS поиск, укажите
