@@ -19,8 +19,7 @@
    - **Uvicorn** — ASGI-сервер
    - **docxtpl + python-docx** — генерация/обработка Word
    - **Локальный BM25-поиск** — поиск по базе знаний
-   - **(опционально) Ollama** — локальная LLM
-   - **(опционально) OpenAI-compatible API** — внешняя или внутренняя нейросеть
+   - **Собственный Python RAG** — локальный BM25-поиск и контролируемая сборка ответа
    - **Docker + Caddy** — контейнерный деплой и reverse proxy
 
    ## 3) Структура проекта
@@ -65,16 +64,6 @@
    Сервисы:
    - `api` — FastAPI
    - `caddy` — reverse proxy
-   - `ollama` — опционально (профиль `llm`)
-
-   Для LLM:
-   ```powershell
-   docker compose --profile llm up -d
-   docker compose exec ollama ollama pull qwen2.5:7b-instruct
-   ```
-   После этого заполнить в `.env`:
-   - `LLM_URL=http://ollama:11434`
-   - `LLM_MODEL=qwen2.5:7b-instruct`
 
    ## 6) Переменные окружения (.env)
 
@@ -85,23 +74,17 @@
    - `ALLOWED_ORIGINS` — CORS
    - `AUTH_TOKENS` — роли доступа (`token:role,token:role`)
    - `ADMIN_TOKEN` — доступ к `POST /api/admin/kb/reload`
-   - `LLM_URL`, `LLM_MODEL` — локальная LLM (опционально)
-   - `AI_PROVIDER` — `extractive`, `ollama` или `openai`
-   - `AI_API_KEY` — ключ OpenAI-compatible API (не коммитить в Git)
+   - `AI_PROVIDER` — `local_rag` (основной режим) или `extractive`
    - `AI_CONFIG_PATH` — путь к JSON-конфигурации ограничений
 
-   Для подключения OpenAI-compatible API в `.env`:
+   Для собственного локального RAG:
 
    ```text
-   AI_PROVIDER=openai
-   LLM_URL=https://ai.starimg.ru/v1
-   LLM_MODEL=<название-модели>
-   AI_API_KEY=<секретный-ключ>
+   AI_PROVIDER=local_rag
    ```
 
-   Запрос отправляет вопрос пользователя и найденные пункты инструкции. Перед отправкой
-   e-mail и номера телефонов маскируются. При ошибке API сервис автоматически возвращается
-   к ответу из локальной базы знаний.
+   Вопрос не отправляется наружу: BM25 находит пункты локальной базы, а
+   `LocalRAGAnswerer` собирает ответ только из найденных текстов.
 
    Файл `config/ai.json` уже добавлен как точка расширения для ограничений:
    `max_input_chars`, `max_output_tokens`, `min_relevance`, `allowed_topics`,
@@ -140,11 +123,11 @@
    - `GET /api/sessions/{id}/document` — скачать готовый `.docx`
    - `GET /api/kb/documents` — версии документов в базе знаний
    - `POST /api/admin/kb/reload` — перечитать `kb/chunks.json`
-   - `POST /api/documents/review` — multipart-загрузка `.docx/.txt/.md` и проверка черновика
+   - `POST /api/documents/review` — multipart-загрузка `.pdf/.docx/.txt/.md` и проверка черновика
 
    ## 9) Как обновлять базу знаний (Инструкцию)
 
-   1. Подготовить файл `.docx`, `.txt` или `.md` с пунктами вида `3.4. Текст...`.
+   1. Подготовить файл `.pdf`, `.docx`, `.txt` или `.md` с пунктами вида `3.4. Текст...`.
    2. Выполнить:
 
    ```powershell
@@ -168,7 +151,7 @@
    - фрагменты без достаточного основания;
    - рекомендации, что проверить или дополнить.
 
-   Файлы `.docx`, `.txt` и `.md` размером до 5 МБ читаются во временный файл и
+   Файлы `.pdf`, `.docx`, `.txt` и `.md` размером до 5 МБ читаются во временный файл и
    удаляются после проверки. Это прототип проверки соответствия, а не юридическое
    заключение и не подтверждение согласования документа.
 

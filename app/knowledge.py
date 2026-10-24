@@ -79,6 +79,9 @@ class Chunk:
     template: str | None = None
     access: list = field(default_factory=list)  # пусто = доступно всем ролям
     status: str = "active"
+    filename: str | None = None
+    section: str | None = None
+    paragraph: int | None = None
 
 
 @dataclass
@@ -90,8 +93,11 @@ class Hit:
     def public(self) -> dict:
         c = self.chunk
         snippet = c.text if len(c.text) <= 240 else c.text[:237].rstrip() + "…"
-        return {"id": c.id, "doc": c.doc, "version": c.version, "point": c.point,
+        result = {"id": c.id, "doc": c.doc, "version": c.version, "point": c.point,
                 "title": c.title, "relevance": self.relevance, "snippet": snippet}
+        if c.filename is not None:
+            result.update({"source": c.filename, "section": c.section, "paragraph": c.paragraph})
+        return result
 
 
 class KnowledgeBase:
@@ -109,7 +115,10 @@ class KnowledgeBase:
         self.docs = data.get("docs", [])
         self.chunks = [Chunk(**c) for c in data["chunks"]]
         active = [c for c in self.chunks if c.status == "active"]
-        self._tf = {c.id: Counter(stems(c.text) + stems(c.title) * 2) for c in active}
+        self._tf = {
+            c.id: Counter(stems(c.text) + stems(c.title) * 2 + stems(c.plain))
+            for c in active
+        }
         self._len = {k: sum(v.values()) for k, v in self._tf.items()}
         self._avg = (sum(self._len.values()) / len(self._len)) if self._len else 1
         self._df = Counter(t for tf in self._tf.values() for t in tf)
@@ -161,6 +170,27 @@ class ExtractiveAnswerer:
         return "\n".join(lines)
 
 
+class LocalRAGAnswerer:
+    """Локальный ответчик без внешней модели: поиск и сборка ответа из пунктов KB."""
+
+    def __init__(self, fallback: ExtractiveAnswerer):
+        self.fallback = fallback
+
+    def answer(self, question: str, hits: list[Hit]) -> str:
+        if not hits:
+            return "Информации в базе знаний недостаточно."
+        lines = ["Короткий ответ:"]
+        for hit in hits[:2]:
+            chunk = hit.chunk
+            text = chunk.plain.strip() if chunk.plain else chunk.text.strip()
+            lines.append(f"{text} (п. {chunk.point})")
+        lines.append(f"Основание: " + ", ".join(f"п. {h.chunk.point}" for h in hits[:2]))
+        return "\n".join(lines)
+
+    def chat(self, message: str) -> str:
+        return "В базе знаний нет информации по этому вопросу. Задайте вопрос по инструкции."
+
+
 class OllamaAnswerer:
     """Локальная LLM через Ollama. Данные не покидают контур; запрос маскируется от персональных данных."""
 
@@ -187,6 +217,28 @@ class OllamaAnswerer:
         except Exception:
             log.exception("LLM недоступна, отвечаю дословной выдержкой")
         return self.fallback.answer(question, hits)
+
+    def chat(self, message: str) -> str:
+        """Локальный свободный чат для совместимости с временным API."""
+        body = json.dumps({
+            "model": self.model,
+            "stream": False,
+            "options": {"temperature": 0},
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": mask_pii(message)},
+            ],
+        }).encode()
+        request = urllib.request.Request(
+            f"{self.url}/api/chat",
+            body,
+            {"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            text = json.loads(response.read())["message"]["content"].strip()
+        if not text or is_model_refusal(text):
+            raise ValueError("Локальная модель вернула неподходящий ответ")
+        return text
 
 
 class OpenAIAnswerer:
@@ -384,7 +436,7 @@ class GigaChatAnswerer:
             raise
 
 
-def make_answerer() -> ExtractiveAnswerer | OllamaAnswerer | OpenAIAnswerer | GigaChatAnswerer:
+def make_answerer() -> ExtractiveAnswerer | LocalRAGAnswerer:
     base = ExtractiveAnswerer()
     config = {}
     config_path = Path(os.getenv("AI_CONFIG_PATH", "config/ai.json"))
@@ -399,38 +451,11 @@ def make_answerer() -> ExtractiveAnswerer | OllamaAnswerer | OpenAIAnswerer | Gi
 
     if config.get("enabled") is False:
         return base
-    provider = os.getenv("AI_PROVIDER", config.get("provider", "extractive")).lower()
-    url, model = os.getenv("LLM_URL"), os.getenv("LLM_MODEL")
-    if provider == "openai" and url and model:
-        max_tokens = os.getenv(
-            "AI_MAX_OUTPUT_TOKENS",
-            str(config.get("limits", {}).get("max_output_tokens") or ""),
-        )
-        return OpenAIAnswerer(
-            url,
-            model,
-            base,
-            api_key=os.getenv("AI_API_KEY", ""),
-            max_output_tokens=int(max_tokens) if max_tokens else None,
-            timeout=int(os.getenv("AI_API_TIMEOUT", "15")),
-        )
-    if provider == "ollama" and url and model:
-        return OllamaAnswerer(url, model, base)
-    if provider == "gigachat" and os.getenv("GIGACHAT_AUTH_KEY") and os.getenv("GIGACHAT_MODEL"):
-        return GigaChatAnswerer(
-            auth_key=os.environ["GIGACHAT_AUTH_KEY"],
-            model=os.environ["GIGACHAT_MODEL"],
-            fallback=base,
-            auth_url=os.getenv(
-                "GIGACHAT_AUTH_URL",
-                "https://ngw.devices.sberbank.ru:9443/api/v2/oauth",
-            ),
-            api_url=os.getenv(
-                "GIGACHAT_API_URL",
-                "https://gigachat.devices.sberbank.ru/api/v1",
-            ),
-            scope=os.getenv("GIGACHAT_SCOPE", "GIGACHAT_API_PERS"),
-            timeout=int(os.getenv("AI_API_TIMEOUT", "15")),
-            limits=config.get("limits", {}),
-        )
-    return base
+    provider = os.getenv("AI_PROVIDER", config.get("provider", "local_rag")).lower()
+    if provider == "local_rag":
+        return LocalRAGAnswerer(base)
+    if provider not in {"local_rag", "extractive"}:
+        log.warning("Провайдер %s отключён; используется local_rag", provider)
+    if provider == "extractive":
+        return base
+    return LocalRAGAnswerer(base)

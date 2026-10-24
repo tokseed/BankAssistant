@@ -12,18 +12,18 @@
 - `[API]` [app/__init__.py](./app/__init__.py) — Python-пакет приложения.
 - `[API]` [requirements.txt](./requirements.txt) — FastAPI, Uvicorn и библиотеки документов.
 - `[API]` [Dockerfile](./Dockerfile) — контейнер API.
-- `[API]` [docker-compose.yml](./docker-compose.yml) — сервис API, Caddy и Ollama.
+- `[API]` [docker-compose.yml](./docker-compose.yml) — сервис API и Caddy.
 - `[API]` [Caddyfile](./Caddyfile) — reverse proxy перед API.
 - `[API]` [static/widget.js](./static/widget.js) — клиентский виджет, который вызывает API.
 - `[API]` [static/demo.html](./static/demo.html) — тестовая страница с подключённым виджетом.
 
 ## [AI] Подключение нейросети
 
-- `[AI]` [app/knowledge.py](./app/knowledge.py) — поиск по базе знаний, OpenAI-compatible API, Ollama и fallback на локальный ответ.
+- `[AI]` [app/knowledge.py](./app/knowledge.py) — локальный BM25 и `LocalRAGAnswerer`, без внешней нейросети.
 - `[AI]` [config/ai.json](./config/ai.json) — включение провайдера и JSON-настройки лимитов.
-- `[AI]` [.env.example](./.env.example) — шаблон `AI_PROVIDER`, `LLM_URL`, `LLM_MODEL` и `AI_API_KEY`.
+- `[AI]` [.env.example](./.env.example) — безопасный шаблон `local_rag` без API-ключей.
 
-Секретный ключ нужно хранить только в локальном `.env`. Файл `.env` не добавлять в Git.
+Локальный `.env` не добавлять в Git; внешние API-ключи проекту не нужны.
 
 ## [LIMITS] Ограничения и доступ
 
@@ -40,7 +40,7 @@
 
 - API-маршрут — [app/main.py](./app/main.py);
 - формат запроса к нейросети — [app/knowledge.py](./app/knowledge.py);
-- ключ API — `.env` по образцу [.env.example](./.env.example);
+- локальную модель — `LLM_URL` и `LLM_MODEL` в `.env` по образцу [.env.example](./.env.example);
 - JSON-лимиты — [config/ai.json](./config/ai.json);
 - лимит релевантности — переменная `MIN_RELEVANCE`;
 - доступ роли к шаблону — [templates/templates.json](./templates/templates.json);

@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import hmac
 import asyncio
+import json
 import logging
 import os
+import re
 import tempfile
 from pathlib import Path
 
@@ -25,7 +27,8 @@ from pydantic import BaseModel, Field
 
 from .dialog import Engine
 from .compliance import ALLOWED_SUFFIXES, MAX_DRAFT_BYTES, review_draft
-from .knowledge import GigaChatAnswerer, KnowledgeBase, OpenAIAnswerer, make_answerer
+from .ingest import document_slug, read_lines, split_points
+from .knowledge import KnowledgeBase, LocalRAGAnswerer, make_answerer
 from .render import BASE_DIR, load_templates, render_document
 
 logging.basicConfig(level=logging.INFO)
@@ -91,17 +94,23 @@ def health():
 
 @app.post("/api/chat")
 async def chat(body: ChatIn, role: str = Depends(current_role)):
-    """Temporary direct AI chat without the knowledge-base workflow."""
-    if not isinstance(engine.answerer, (OpenAIAnswerer, GigaChatAnswerer)):
+    """Direct chat endpoint that uses the same local knowledge search as sessions."""
+    if not isinstance(engine.answerer, LocalRAGAnswerer):
         raise HTTPException(503, "AI API не настроен")
     try:
-        message = await asyncio.to_thread(engine.answerer.chat, body.message)
-        return {"message": message}
-    except TimeoutError:
-        raise HTTPException(504, "AI API не ответил вовремя")
+        hits = await asyncio.to_thread(engine.kb.search, body.message, role)
+        good = [hit for hit in hits if hit.relevance >= engine.kb.min_relevance]
+        if not good:
+            return {
+                "message": "В базе знаний нет информации по этому вопросу. "
+                "Уточните название документа или пункт инструкции.",
+                "sources": [],
+            }
+        message = await asyncio.to_thread(engine.answerer.answer, body.message, good)
+        return {"message": message, "sources": [hit.public() for hit in good]}
     except Exception:
-        logging.getLogger("docgen.api").exception("AI chat request failed")
-        raise HTTPException(502, "AI API недоступен")
+        logging.getLogger("docgen.api").exception("Knowledge chat request failed")
+        raise HTTPException(500, "Не удалось выполнить поиск по базе знаний")
 
 
 @app.get("/api/templates")
@@ -115,15 +124,101 @@ def kb_documents(role: str = Depends(current_role)):
     return kb.documents()
 
 
+@app.get("/api/kb/articles")
+def kb_articles(role: str = Depends(current_role)):
+    return [
+        {
+            "id": chunk.id,
+            "doc": chunk.doc,
+            "version": chunk.version,
+            "point": chunk.point,
+            "title": chunk.title,
+            "text": chunk.text,
+            "plain": chunk.plain,
+        }
+        for chunk in kb.chunks
+        if chunk.status == "active" and (not chunk.access or role in chunk.access)
+    ]
+
+
+@app.get("/api/kb/search")
+def kb_search(q: str = "", role: str = Depends(current_role)):
+    query = q.strip()
+    if not query:
+        return []
+    return [hit.public() for hit in kb.search(query, role, top_k=12)]
+
+
+@app.post("/api/admin/kb/upload")
+async def kb_upload(
+    file: UploadFile = File(...),
+    doc: str = "Загруженная инструкция",
+    version: str = "1.0",
+    x_admin_token: str | None = Header(None),
+):
+    if ADMIN_TOKEN and not hmac.compare_digest(ADMIN_TOKEN, x_admin_token or ""):
+        raise HTTPException(403, "Нет доступа")
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in {".docx", ".pdf", ".txt", ".md"}:
+        raise HTTPException(415, "Поддерживаются только .docx, .pdf, .txt и .md")
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp:
+            temp_path = Path(temp.name)
+            total = 0
+            while chunk := await file.read(64 * 1024):
+                total += len(chunk)
+                if total > MAX_DRAFT_BYTES:
+                    raise HTTPException(413, "Файл слишком большой: максимум 5 МБ")
+                temp.write(chunk)
+        points = split_points(read_lines(temp_path))
+        if not points:
+            raise HTTPException(422, "В документе не найдены нумерованные пункты")
+        data = json.loads(kb.path.read_text(encoding="utf-8"))
+        for item in data["chunks"]:
+            if item["doc"] == doc and item["status"] == "active":
+                item["status"] = "archived"
+        for item in data["docs"]:
+            if item["doc"] == doc and item["status"] == "active":
+                item["status"] = "archived"
+        slug = document_slug(doc)
+        for point, text in points:
+            data["chunks"].append({
+                "id": f"{slug}-v{version}-{point}",
+                "doc": doc,
+                "version": version,
+                "point": point,
+                "title": text[:90],
+                "text": text,
+                "plain": "",
+                "template": None,
+                "access": [],
+                "status": "active",
+            })
+        data["docs"].append({"doc": doc, "version": version, "status": "active"})
+        kb.path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        kb.load()
+        return {"status": "reloaded", "document": doc, "version": version, "points": len(points)}
+    except HTTPException:
+        raise
+    except (OSError, ValueError, KeyError, RuntimeError):
+        logging.getLogger("docgen.api").exception("Knowledge upload failed")
+        raise HTTPException(422, "Не удалось прочитать документ")
+    finally:
+        await file.close()
+        if temp_path:
+            temp_path.unlink(missing_ok=True)
+
+
 @app.post("/api/documents/review")
 async def review_document(
     file: UploadFile = File(...),
     role: str = Depends(current_role),
 ):
-    """Проверить черновик DOCX/TXT/MD по доступным пунктам Инструкции."""
+    """Проверить черновик PDF/DOCX/TXT/MD по доступным пунктам Инструкции."""
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in ALLOWED_SUFFIXES:
-        raise HTTPException(415, "Поддерживаются только .docx, .txt и .md")
+        raise HTTPException(415, "Поддерживаются только .pdf, .docx, .txt и .md")
 
     temp_path: Path | None = None
     total = 0
@@ -187,7 +282,7 @@ def download(sid: str, role: str = Depends(current_role)):
 
 @app.get("/", include_in_schema=False)
 def demo():
-    return FileResponse(BASE_DIR / "static" / "demo.html")
+    return FileResponse(BASE_DIR / "static" / "wiki.html")
 
 
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")

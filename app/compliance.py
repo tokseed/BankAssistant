@@ -8,7 +8,7 @@ from .ingest import read_lines
 from .knowledge import Hit, KnowledgeBase, stems
 
 MAX_DRAFT_BYTES = 5 * 1024 * 1024
-ALLOWED_SUFFIXES = {".docx", ".txt", ".md"}
+ALLOWED_SUFFIXES = {".docx", ".pdf", ".txt", ".md"}
 POINT_LINE_RE = re.compile(r"^\s*(\d+(?:\.\d+)*)[.)]?\s+(.+)$")
 
 

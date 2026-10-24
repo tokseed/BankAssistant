@@ -6,10 +6,7 @@ services:
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-*}
       AUTH_TOKENS: ${AUTH_TOKENS:-}
       ADMIN_TOKEN: ${ADMIN_TOKEN:-}
-      AI_PROVIDER: ${AI_PROVIDER:-extractive}
-      LLM_URL: ${LLM_URL:-}
-      LLM_MODEL: ${LLM_MODEL:-}
-      AI_API_KEY: ${AI_API_KEY:-}
+      AI_PROVIDER: ${AI_PROVIDER:-local_rag}
       AI_CONFIG_PATH: ${AI_CONFIG_PATH:-config/ai.json}
       SESSION_TTL: "1800"
     volumes:
@@ -32,15 +29,6 @@ services:
       - caddy_data:/data
       - caddy_config:/config
 
-  # Локальная LLM: запускается только с профилем llm. Данные не покидают сервер.
-  ollama:
-    image: ollama/ollama
-    profiles: ["llm"]
-    restart: unless-stopped
-    volumes:
-      - ollama:/root/.ollama
-
 volumes:
   caddy_data:
   caddy_config:
-  ollama:
