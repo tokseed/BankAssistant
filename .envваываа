@@ -21,8 +21,8 @@ ADMIN_TOKEN=
 # Для локальной Ollama:
 # AI_PROVIDER=ollama
 # docker compose --profile llm up -d && docker compose exec ollama ollama pull qwen2.5:7b-instruct
-AI_PROVIDER=extractive
-LLM_URL=
-LLM_MODEL=
+AI_PROVIDER=openai
+LLM_URL=https://ai.starimg.ru/v1
+LLM_MODEL=qwen3.8-flash
 AI_API_KEY=
 AI_CONFIG_PATH=config/ai.json

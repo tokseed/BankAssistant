@@ -2,19 +2,30 @@
 from __future__ import annotations
 
 import hmac
+import asyncio
 import logging
 import os
 import tempfile
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+# Load local .env before reading configuration. Existing environment variables win.
+ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
+if ENV_FILE.exists():
+    for line in ENV_FILE.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip())
+
+from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .dialog import Engine
-from .knowledge import KnowledgeBase, make_answerer
+from .compliance import ALLOWED_SUFFIXES, MAX_DRAFT_BYTES, review_draft
+from .knowledge import GigaChatAnswerer, KnowledgeBase, OpenAIAnswerer, make_answerer
 from .render import BASE_DIR, load_templates, render_document
 
 logging.basicConfig(level=logging.INFO)
@@ -69,9 +80,28 @@ class MessageIn(BaseModel):
     text: str = Field(min_length=1, max_length=500)
 
 
+class ChatIn(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
+
+
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
+
+
+@app.post("/api/chat")
+async def chat(body: ChatIn, role: str = Depends(current_role)):
+    """Temporary direct AI chat without the knowledge-base workflow."""
+    if not isinstance(engine.answerer, (OpenAIAnswerer, GigaChatAnswerer)):
+        raise HTTPException(503, "AI API не настроен")
+    try:
+        message = await asyncio.to_thread(engine.answerer.chat, body.message)
+        return {"message": message}
+    except TimeoutError:
+        raise HTTPException(504, "AI API не ответил вовремя")
+    except Exception:
+        logging.getLogger("docgen.api").exception("AI chat request failed")
+        raise HTTPException(502, "AI API недоступен")
 
 
 @app.get("/api/templates")
@@ -83,6 +113,40 @@ def templates(role: str = Depends(current_role)):
 def kb_documents(role: str = Depends(current_role)):
     """Какие документы и версии сейчас в базе знаний."""
     return kb.documents()
+
+
+@app.post("/api/documents/review")
+async def review_document(
+    file: UploadFile = File(...),
+    role: str = Depends(current_role),
+):
+    """Проверить черновик DOCX/TXT/MD по доступным пунктам Инструкции."""
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in ALLOWED_SUFFIXES:
+        raise HTTPException(415, "Поддерживаются только .docx, .txt и .md")
+
+    temp_path: Path | None = None
+    total = 0
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp:
+            temp_path = Path(temp.name)
+            while chunk := await file.read(64 * 1024):
+                total += len(chunk)
+                if total > MAX_DRAFT_BYTES:
+                    raise HTTPException(413, "Файл слишком большой: максимум 5 МБ")
+                temp.write(chunk)
+        result = review_draft(temp_path, kb, role)
+        result["document"] = file.filename
+        return result
+    except HTTPException:
+        raise
+    except (OSError, ValueError, RuntimeError):
+        logging.getLogger("docgen.api").exception("Draft review failed")
+        raise HTTPException(422, "Не удалось прочитать или проверить документ")
+    finally:
+        await file.close()
+        if temp_path:
+            temp_path.unlink(missing_ok=True)
 
 
 @app.post("/api/admin/kb/reload")

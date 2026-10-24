@@ -17,7 +17,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from .knowledge import KnowledgeBase, stems
+from .knowledge import KnowledgeBase, is_model_refusal, is_prompt_injection, stems
 
 log = logging.getLogger("docgen.dialog")
 
@@ -161,6 +161,8 @@ class Engine:
             text = text.strip()
             low = text.lower()
 
+            if is_prompt_injection(text):
+                return self._to_idle(s, "Я не могу изменить правила помощника. Задайте вопрос по инструкции или выберите документ.")
             if low in CANCEL:
                 return self._to_idle(s, "Хорошо, начнём заново. О чём спросить или какой документ подготовить?")
             if s.state == "collect":
@@ -244,8 +246,16 @@ class Engine:
         good = [h for h in hits if h.relevance >= self.kb.min_relevance]
         log.info("answer sid=%s found=%s", s.id[:8], [h.chunk.id for h in good])  # текст запроса не логируем
         if not good:
-            msg = ("В базе знаний нет информации, достаточной для уверенного ответа. "
-                   "Я не буду гадать, чтобы не ввести вас в заблуждение.")
+            chat = getattr(self.answerer, "chat", None)
+            if chat is not None:
+                try:
+                    response = chat(q)
+                    if not is_model_refusal(response):
+                        return [response], [], None
+                except Exception:
+                    log.exception("Общий чат AI недоступен, возвращаю ответ по базе")
+            msg = ("В базе знаний нет информации по этому вопросу. "
+                   "Задайте вопрос по инструкции или выберите документ для подготовки.")
             contact = self.kb.meta.get("support_contact")
             if contact:
                 msg += f"\nЗа разъяснением обратитесь: {contact}."

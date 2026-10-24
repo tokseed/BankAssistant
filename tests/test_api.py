@@ -32,3 +32,15 @@ def test_dialog_endpoint() -> None:
 def test_knowledge_base_loading() -> None:
     kb = KnowledgeBase(ROOT / "kb" / "chunks.json")
     assert kb.chunks
+
+
+def test_document_review_endpoint() -> None:
+    response = client.post(
+        "/api/documents/review",
+        files={"file": ("draft.txt", "3.4. Срок согласования проекта документа.\n", "text/plain")},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "reviewed"
+    assert data["summary"]["sections"] == 1
+    assert data["checks"][0]["source"]["point"] == "3.4"

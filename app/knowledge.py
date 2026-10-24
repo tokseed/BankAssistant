@@ -12,12 +12,31 @@ import logging
 import math
 import os
 import re
+import threading
+import time
+import uuid
+import urllib.error
+import urllib.parse
 import urllib.request
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .guardrails import is_model_refusal, is_prompt_injection, validate_answer
+
 log = logging.getLogger("docgen.kb")
+PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "system_ru.md"
+
+
+def load_system_prompt() -> str:
+    try:
+        return PROMPT_PATH.read_text(encoding="utf-8").strip()
+    except OSError:
+        log.exception("Не удалось прочитать системный промпт: %s", PROMPT_PATH)
+        return "Отвечай только на основе переданного контекста и не выдумывай факты."
+
+
+SYSTEM_PROMPT = load_system_prompt()
 
 STOP = set("""и в во не что он на я с со как а то все она так его но да ты к у же вы за бы по только ее мне было вот от меня
 еще нет о из ему теперь когда даже ну вдруг ли если уже или ни быть был него до вас нибудь опять уж вам ведь там потом себя
@@ -145,11 +164,7 @@ class ExtractiveAnswerer:
 class OllamaAnswerer:
     """Локальная LLM через Ollama. Данные не покидают контур; запрос маскируется от персональных данных."""
 
-    SYSTEM = (
-        "Ты помощник сотрудника по внутренним инструкциям. Отвечай ТОЛЬКО на основе приведённых пунктов. "
-        "Объясняй простым языком, коротко. Всегда указывай номера пунктов в формате «п. 3.4». "
-        "Если в пунктах нет ответа, напиши ровно: «Информации в базе знаний недостаточно». Ничего не добавляй от себя."
-    )
+    SYSTEM = SYSTEM_PROMPT
 
     def __init__(self, url: str, model: str, fallback: ExtractiveAnswerer, timeout: int = 60):
         self.url, self.model, self.fallback, self.timeout = url.rstrip("/"), model, fallback, timeout
@@ -167,8 +182,8 @@ class OllamaAnswerer:
             req = urllib.request.Request(f"{self.url}/api/chat", body, {"Content-Type": "application/json"})
             with urllib.request.urlopen(req, timeout=self.timeout) as r:
                 text = json.loads(r.read())["message"]["content"].strip()
-            if text:
-                return text
+                if text and validate_answer(text, {h.chunk.point for h in hits}):
+                    return text
         except Exception:
             log.exception("LLM недоступна, отвечаю дословной выдержкой")
         return self.fallback.answer(question, hits)
@@ -177,11 +192,7 @@ class OllamaAnswerer:
 class OpenAIAnswerer:
     """OpenAI-compatible API with a safe extractive fallback."""
 
-    SYSTEM = (
-        "Ты помощник сотрудника по внутренним инструкциям. Отвечай ТОЛЬКО на основе приведённых пунктов. "
-        "Объясняй простым языком, коротко. Всегда указывай номера пунктов в формате «п. 3.4». "
-        "Если в пунктах нет ответа, напиши ровно: «Информации в базе знаний недостаточно». Ничего не добавляй от себя."
-    )
+    SYSTEM = SYSTEM_PROMPT
 
     def __init__(
         self,
@@ -189,7 +200,7 @@ class OpenAIAnswerer:
         model: str,
         fallback: ExtractiveAnswerer,
         api_key: str = "",
-        timeout: int = 60,
+        timeout: int = 15,
         max_output_tokens: int | None = None,
     ):
         self.url = url.rstrip("/")
@@ -224,14 +235,156 @@ class OpenAIAnswerer:
             with urllib.request.urlopen(req, timeout=self.timeout) as response:
                 data = json.loads(response.read())
             text = data["choices"][0]["message"]["content"].strip()
-            if text:
+            if text and validate_answer(text, {h.chunk.point for h in hits}):
                 return text
         except Exception:
             log.exception("AI API недоступен, отвечаю дословной выдержкой")
         return self.fallback.answer(question, hits)
 
+    def chat(self, message: str) -> str:
+        payload = {
+            "model": self.model,
+            "temperature": 0.7,
+            "messages": [
+                {"role": "system", "content": "Ты полезный универсальный чат-бот. Отвечай на русском языке, если пользователь пишет по-русски."},
+                {"role": "user", "content": mask_pii(message)},
+            ],
+        }
+        if self.max_output_tokens is not None:
+            payload["max_tokens"] = self.max_output_tokens
 
-def make_answerer() -> ExtractiveAnswerer | OllamaAnswerer | OpenAIAnswerer:
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = "Bearer " + self.api_key
+        req = urllib.request.Request(
+            f"{self.url}/chat/completions",
+            json.dumps(payload).encode(),
+            headers,
+        )
+        with urllib.request.urlopen(req, timeout=self.timeout) as response:
+            data = json.loads(response.read())
+        return data["choices"][0]["message"]["content"].strip()
+
+
+class GigaChatAnswerer:
+    """GigaChat API client with OAuth token caching."""
+
+    SYSTEM = SYSTEM_PROMPT
+
+    def __init__(
+        self,
+        auth_key: str,
+        model: str,
+        fallback: ExtractiveAnswerer,
+        auth_url: str = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth",
+        api_url: str = "https://gigachat.devices.sberbank.ru/api/v1",
+        scope: str = "GIGACHAT_API_PERS",
+        timeout: int = 15,
+        limits: dict | None = None,
+    ):
+        self.auth_key = auth_key
+        self.model = model
+        self.fallback = fallback
+        self.auth_url = auth_url.rstrip("/")
+        self.api_url = api_url.rstrip("/")
+        self.scope = scope
+        self.timeout = timeout
+        self.limits = limits or {}
+        self._access_token: str | None = None
+        self._expires_at = 0.0
+        self._token_lock = threading.Lock()
+
+    def _token(self) -> str:
+        now = time.time()
+        if self._access_token and now < self._expires_at - 30:
+            return self._access_token
+        with self._token_lock:
+            now = time.time()
+            if self._access_token and now < self._expires_at - 30:
+                return self._access_token
+            request = urllib.request.Request(
+                self.auth_url,
+                data=f"scope={urllib.parse.quote(self.scope)}".encode(),
+                headers={
+                    "Authorization": "Basic " + self.auth_key,
+                    "RqUID": str(uuid.uuid4()),
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                data = json.loads(response.read())
+            self._access_token = data["access_token"]
+            self._expires_at = now + int(data.get("expires_in", 1800))
+            return self._access_token
+
+    def _request(self, message: str, system: str) -> str:
+        payload = {
+            "model": self.model,
+            "stream": False,
+            "temperature": 0.7,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": mask_pii(message)},
+            ],
+        }
+        request = urllib.request.Request(
+            f"{self.api_url}/chat/completions",
+            data=json.dumps(payload).encode(),
+            headers={
+                "Authorization": "Bearer " + self._token(),
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            data = json.loads(response.read())
+        return data["choices"][0]["message"]["content"].strip()
+
+    def answer(self, question: str, hits: list[Hit]) -> str:
+        context = "\n".join(f"п. {h.chunk.point} ({h.chunk.title}): {h.chunk.text}" for h in hits)
+        try:
+            text = self._request(
+                f"<context>\n{context}\n</context>\n\n<question>\n{question}\n</question>",
+                self.SYSTEM,
+            )
+            if validate_answer(text, {h.chunk.point for h in hits}):
+                return text
+            log.warning("Ответ GigaChat отклонён: нет корректных ссылок на пункты")
+            return self.fallback.answer(question, hits)
+        except urllib.error.HTTPError as exc:
+            details = exc.read().decode("utf-8", errors="replace")
+            log.error("GigaChat вернул HTTP %s: %s", exc.code, details)
+            return self.fallback.answer(question, hits)
+        except Exception:
+            log.exception("GigaChat недоступен, отвечаю дословной выдержкой")
+            return self.fallback.answer(question, hits)
+
+    def chat(self, message: str) -> str:
+        max_input = self.limits.get("max_input_chars")
+        if max_input is not None and len(message) > max_input:
+            raise ValueError(f"Сообщение слишком длинное: максимум {max_input} символов")
+        lowered = message.lower()
+        if is_prompt_injection(message):
+            raise ValueError("Запрос нарушает правила безопасности")
+        blocked = [str(topic).lower() for topic in self.limits.get("blocked_topics", [])]
+        if any(topic in lowered for topic in blocked):
+            raise ValueError("Тема сообщения запрещена настройками AI")
+        allowed = [str(topic).lower() for topic in self.limits.get("allowed_topics", [])]
+        if allowed and not any(topic in lowered for topic in allowed):
+            raise ValueError("Тема сообщения не входит в разрешённый список")
+        try:
+            text = self._request(message, self.SYSTEM)
+            if is_model_refusal(text):
+                raise ValueError("Модель вернула неподходящий служебный отказ")
+            return text
+        except urllib.error.HTTPError as exc:
+            details = exc.read().decode("utf-8", errors="replace")
+            log.error("GigaChat вернул HTTP %s: %s", exc.code, details)
+            raise
+
+
+def make_answerer() -> ExtractiveAnswerer | OllamaAnswerer | OpenAIAnswerer | GigaChatAnswerer:
     base = ExtractiveAnswerer()
     config = {}
     config_path = Path(os.getenv("AI_CONFIG_PATH", "config/ai.json"))
@@ -259,7 +412,25 @@ def make_answerer() -> ExtractiveAnswerer | OllamaAnswerer | OpenAIAnswerer:
             base,
             api_key=os.getenv("AI_API_KEY", ""),
             max_output_tokens=int(max_tokens) if max_tokens else None,
+            timeout=int(os.getenv("AI_API_TIMEOUT", "15")),
         )
     if provider == "ollama" and url and model:
         return OllamaAnswerer(url, model, base)
+    if provider == "gigachat" and os.getenv("GIGACHAT_AUTH_KEY") and os.getenv("GIGACHAT_MODEL"):
+        return GigaChatAnswerer(
+            auth_key=os.environ["GIGACHAT_AUTH_KEY"],
+            model=os.environ["GIGACHAT_MODEL"],
+            fallback=base,
+            auth_url=os.getenv(
+                "GIGACHAT_AUTH_URL",
+                "https://ngw.devices.sberbank.ru:9443/api/v2/oauth",
+            ),
+            api_url=os.getenv(
+                "GIGACHAT_API_URL",
+                "https://gigachat.devices.sberbank.ru/api/v1",
+            ),
+            scope=os.getenv("GIGACHAT_SCOPE", "GIGACHAT_API_PERS"),
+            timeout=int(os.getenv("AI_API_TIMEOUT", "15")),
+            limits=config.get("limits", {}),
+        )
     return base

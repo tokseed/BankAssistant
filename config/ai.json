@@ -1,6 +1,7 @@
 {
   "enabled": true,
-  "provider": "openai",
+  "provider": "gigachat",
+  "system_prompt": "prompts/system_ru.md",
   "limits": {
     "max_input_chars": null,
     "max_output_tokens": null,
