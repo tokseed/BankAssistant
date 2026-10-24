@@ -1,0 +1,10 @@
+fastapi>=0.110,<1.0
+uvicorn[standard]>=0.29
+docxtpl>=0.16
+python-docx>=1.1
+langchain-text-splitters>=0.2,<2.0
+langchain-community>=0.2,<1.0
+# faiss-cpu wheels are published for macOS ARM64 and Linux; install separately
+# on platforms where the matching wheel is unavailable.
+faiss-cpu>=1.8,<2.0
+pyodbc>=5.1,<6.0
