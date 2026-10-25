@@ -4,8 +4,11 @@
     {
       "id": "memo",
       "title": "Служебная записка",
+      "quick_select": true,
+      "legacy_list": true,
       "version": "1.0",
       "description": "Внутренний документ для информирования или обращения к руководителю",
+      "dynamic": {"conditions": ["has_deadline", "has_items"], "tables": ["items"]},
       "keywords": ["записка", "служебка", "докладная"],
       "file": "memo.docx",
       "output_name": "Служебная записка",
@@ -23,8 +26,76 @@
       ]
     },
     {
+      "id": "application",
+      "title": "Заявление",
+      "quick_select": true,
+      "legacy_list": false,
+      "version": "1.0",
+      "description": "Заявление сотрудника",
+      "dynamic": {"conditions": ["has_items"], "tables": ["items"]},
+      "keywords": ["заявление", "заявка", "прошу"],
+      "file": "application.docx",
+      "output_name": "Заявление",
+      "roles": [],
+      "source": {"doc": "Инструкция по документообороту (ДЕМО)", "point": "2.3"},
+      "visa": {"approvers": ["Руководитель подразделения"], "days": 2},
+      "fields": [
+        {"key": "to_whom", "label": "Кому", "question": "Кому адресовано заявление?", "type": "text"},
+        {"key": "from_fio", "label": "Заявитель", "question": "Ваши ФИО?", "type": "text"},
+        {"key": "subject", "label": "Тема", "question": "О чём заявление?", "type": "text", "max": 150},
+        {"key": "body", "label": "Текст", "question": "Текст заявления или просьба?", "type": "text", "max": 800},
+        {"key": "date", "label": "Дата", "question": "Дата заявления?", "type": "date"}
+      ]
+    },
+    {
+      "id": "act",
+      "title": "Акт",
+      "quick_select": true,
+      "legacy_list": false,
+      "version": "1.0",
+      "description": "Акт о выполнении работ или передаче",
+      "dynamic": {"conditions": ["has_items"], "tables": ["items"]},
+      "keywords": ["акт", "передача", "выполнение"],
+      "file": "act.docx",
+      "output_name": "Акт",
+      "roles": [],
+      "source": {"doc": "Инструкция по документообороту (ДЕМО)", "point": "2.3"},
+      "visa": {"approvers": ["Руководитель подразделения"], "days": 2},
+      "fields": [
+        {"key": "title", "label": "Название", "question": "Что фиксирует акт?", "type": "text"},
+        {"key": "date", "label": "Дата", "question": "Дата составления акта?", "type": "date"},
+        {"key": "place", "label": "Место", "question": "Где составлен акт?", "type": "text"},
+        {"key": "members", "label": "Состав комиссии", "question": "Кто участвует в составлении акта?", "type": "text", "max": 400},
+        {"key": "body", "label": "Содержание", "question": "Что установлено актом?", "type": "text", "max": 800}
+      ]
+    },
+    {
+      "id": "disposition",
+      "title": "Распоряжение",
+      "quick_select": true,
+      "legacy_list": false,
+      "version": "1.0",
+      "description": "Распоряжение по рабочему вопросу",
+      "dynamic": {"conditions": ["has_deadline", "has_items"], "tables": ["items"]},
+      "keywords": ["распоряжение", "распорядиться", "приказ"],
+      "file": "disposition.docx",
+      "output_name": "Распоряжение",
+      "roles": [],
+      "source": {"doc": "Инструкция по документообороту (ДЕМО)", "point": "5.2"},
+      "visa": {"approvers": ["Руководитель подразделения"], "days": 2},
+      "fields": [
+        {"key": "number", "label": "Номер", "question": "Номер распоряжения?", "type": "text"},
+        {"key": "date", "label": "Дата", "question": "Дата распоряжения?", "type": "date"},
+        {"key": "title", "label": "Заголовок", "question": "Краткий заголовок распоряжения?", "type": "text"},
+        {"key": "task", "label": "Поручение", "question": "Что необходимо сделать?", "type": "text", "max": 800},
+        {"key": "responsible", "label": "Ответственный", "question": "Кто отвечает за исполнение?", "type": "text"},
+        {"key": "deadline", "label": "Срок", "question": "Срок исполнения?", "type": "date"}
+      ]
+    },
+    {
       "id": "order",
       "title": "Поручение (проект)",
+      "quick_select": false,
       "version": "1.0",
       "description": "Проект поручения исполнителю со сроком и контролёром",
       "keywords": ["поручение", "поручить", "задание"],

@@ -1,59 +1,130 @@
-(function(){
+(function () {
   "use strict";
-  var app=document.getElementById("app"), api="/api", state={articles:[],query:"",theme:localStorage.getItem("wiki-theme")||"dark"};
-  var categories=[
-    ["01","Начало работы","Как пользоваться помощником, Инструкцией и базой знаний"],
-    ["02","Подготовка документов","Реквизиты, бланки и требования к проектам документов"],
-    ["03","Согласование и визирование","Маршрут проекта, визы, сроки и возврат на доработку"],
-    ["04","Регистрация и хранение","Регистрация, исполнение поручений и контроль сроков"],
-    ["05","Матрица визирования","Кто согласует документ и в каких случаях"],
-    ["06","Информационная безопасность","Работа со служебной информацией и доступами"],
-    ["07","Проверка черновика","Проверка готового документа и рекомендации"],
-    ["08","Шаблоны документов","Подготовка черновика по модульному бланку"]
+  var app = document.getElementById("app"), api = "/api";
+  var state = {articles: [], query: "", theme: localStorage.getItem("wiki-theme") || "dark"};
+  var categories = [
+    ["01", "Начало работы", "Основные правила работы с помощником и базой знаний"],
+    ["02", "Подготовка документов", "Реквизиты, бланки и требования к проектам"],
+    ["03", "Согласование и визирование", "Маршрут проекта, визы и сроки"],
+    ["04", "Регистрация и хранение", "Регистрация, исполнение и хранение документов"],
+    ["05", "Матрица визирования", "Правила выбора обязательных согласующих"],
+    ["06", "Информационная безопасность", "Работа со служебной информацией и доступами"],
+    ["07", "Проверка черновика", "Проверка готового документа по инструкции"],
+    ["08", "Шаблоны документов", "Подготовка документов по модульным бланкам"]
   ];
-  var demos=[
-    ["intro","Как пользоваться помощником по Инструкции","Начало работы","Как задать вопрос, открыть источник и перейти к выполнению действия.","1. Опишите ситуацию своими словами\n2. Проверьте найденные пункты\n3. Откройте источник в базе знаний"],
-    ["memo","Как оформить служебную записку","Подготовка документов","Обязательные реквизиты и порядок подготовки проекта служебной записки.","Подразделение автора\nАдресат\nЗаголовок\nТекст\nПодпись и дата"],
-    ["approval","Как согласовать проект документа","Согласование и визирование","Последовательность визирования, сроки и действия при замечаниях.","Определите маршрут по матрице\nПолучите визы\nИсправьте замечания"],
-    ["registration","Как зарегистрировать подписанный документ","Регистрация и хранение","Срок регистрации и контроль движения подписанного документа.","Проверьте подпись\nЗарегистрируйте документ\nСохраните регистрационный номер"],
-    ["matrix","Как определить согласующих","Матрица визирования","Как использовать матрицу визирования для выбора маршрута проекта.","Определите вид документа\nНайдите строку матрицы\nПроверьте обязательных визирующих"],
-    ["security","Как работать со служебной информацией","Информационная безопасность","Базовые правила передачи, хранения и обсуждения документов.","Проверьте адресатов\nИспользуйте разрешённое хранилище\nНе передавайте документы в личные сервисы"],
-    ["review","Как проверить готовый черновик","Проверка черновика","Загрузите проект документа и получите сопоставление с пунктами Инструкции.","Загрузите DOCX\nИзучите процент соответствия\nИсправьте рекомендации"],
-    ["template","Как подготовить документ по шаблону","Шаблоны документов","Диалоговое заполнение модульного бланка с проверкой обязательных полей.","Выберите шаблон\nОтветьте на вопросы\nСкачайте черновик"]
-  ];
-  demos.push(
-    ["version","Как проверить актуальность Инструкции","Начало работы","Перед применением требования проверьте документ и активную версию.","Откройте раздел Версии документов\nВыберите активную версию"],
-    ["draft","Как подготовить проект документа","Подготовка документов","Проверьте бланк, обязательные реквизиты и ссылку на основание.","Используйте актуальный бланк\nЗаполните реквизиты\nПроверьте проект"],
-    ["return","Что делать при возврате на доработку","Согласование и визирование","Как учесть замечания и повторно направить проект на согласование.","Изучите замечания\nИсправьте проект\nПовторно направьте полный маршрут"],
-    ["execution","Как контролировать исполнение поручения","Регистрация и хранение","Что фиксировать при постановке документа на контроль.","Назначьте исполнителя\nУкажите срок\nПроверьте отметку об исполнении"],
-    ["appendix","Как найти приложение или бланк","Матрица визирования","Как перейти от пункта Инструкции к связанному приложению.","Откройте источник\nПроверьте приложение\nИспользуйте актуальный бланк"],
-    ["access","Ролевая модель и доступ к документам","Информационная безопасность","Какие ограничения действуют для разных ролей сотрудников.","Доступ определяется ролью\nПроверяйте получателя\nНе обходите ограничения"],
-    ["faq","В базе знаний нет ответа","Проверка черновика","Что сделать, если подходящий пункт Инструкции не найден.","Уточните запрос\nПроверьте версию документа\nОбратитесь к владельцу процесса"],
-    ["template-faq","Как получить черновик документа","Шаблоны документов","Запустите диалоговый сценарий и скачайте заполненный DOCX.","Выберите тип документа\nЗаполните поля\nПроверьте результат"]
-  );
-  function icon(){return '<span class="search-icon" aria-hidden="true"></span>'}
-  function header(){return '<header class="topbar"><button class="theme mobile-menu" data-action="menu" aria-label="Открыть меню">Menu</button><a class="brand" href="#/">'+
-    '<span class="mark">B</span> BankAssistant <span style="color:var(--muted);font-weight:500">Wiki</span></a>'+
-    '<nav class="nav"><a href="#/">Обзор</a><a href="#/wiki">База знаний</a><a href="#/templates">Шаблоны</a><a href="#/review">Проверить документ</a><a href="#/versions">Версии</a></nav>'+
-    '<label class="top-search">'+icon()+'<input data-search placeholder="Поиск по базе знаний..." value="'+esc(state.query)+'"></label>'+
-    '<button class="theme" data-action="theme">Тема</button></header>'}
-  function footer(){return '<footer class="footer"><div class="container">© 2026 BankAssistant · Локальная база знаний и помощник по регламентам</div></footer>'}
-  function esc(s){return String(s||"").replace(/[&<>"']/g,function(c){return({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]})}
-  function searchBox(){return '<label class="hero-search">'+icon()+'<input data-search placeholder="Поиск по базе знаний..." value="'+esc(state.query)+'"><div class="results" data-results></div></label>'}
-  function card(c){return '<a class="card" href="#/wiki?cat='+encodeURIComponent(c[1])+'"><div class="icon">'+c[0]+'</div><h3>'+c[1]+'</h3><p>'+c[2]+'</p><span class="count">Открыть раздел</span></a>'}
-  function articleCard(a){return '<a class="card article-card" href="#/article/'+a[0]+'"><span class="eyebrow">'+a[2]+'</span><h3>'+a[1]+'</h3><p>'+a[3]+'</p><span class="meta">Обновлено сегодня · 5 мин чтения</span></a>'}
-  function home(){return header()+'<main><section class="hero container"><span class="eyebrow">Помощник по внутренним регламентам</span><h1>Разберитесь в требованиях Инструкции</h1><p>Находите нужный пункт, получайте простое объяснение и переходите к подготовке или проверке документа.</p>'+searchBox()+'</section><section class="section container"><div class="section-head"><div><h2>Что можно сделать</h2><p>Один рабочий контур для поиска требований и подготовки документов.</p></div></div><div class="grid">'+categories.map(card).join("")+'</div></section><section class="section container"><div class="section-head"><div><h2>Популярные сценарии</h2><p>Ответы основаны на активной версии документов и содержат источники.</p></div><a class="btn secondary" href="#/wiki">Все материалы</a></div><div class="articles">'+demos.slice(0,6).map(articleCard).join("")+'</div></section><section class="section container"><div class="help"><div><h2>Есть готовый проект документа?</h2><p>Загрузите DOCX, TXT или MD и получите процент соответствия требованиям и рекомендации.</p></div><a class="btn" href="#/review">Проверить черновик</a></div></section></main>'+footer()}
-  function sidebar(){return '<aside class="sidebar" data-sidebar><a class="side-brand" href="#/"><span class="mark">B</span> BankAssistant <span style="color:var(--muted);font-weight:500">Wiki</span></a><div class="side-profile"><span>Личный кабинет</span><span>...</span></div><div class="side-title">База знаний</div><div class="side-nav-label">Разделы</div>'+categories.map(function(c){return '<div class="side-group"><button data-cat="'+esc(c[1])+'">'+c[0]+' '+c[1]+' <span>+</span></button><div>'+demos.filter(function(a){return a[2]===c[1]}).map(function(a){return '<a class="side-link" href="#/article/'+a[0]+'">'+a[1]+'</a>'}).join("")+'</div></div>'}).join("")+'</aside>'}
-  function wiki(){return header()+'<main class="container wiki-layout">'+sidebar()+'<section><div class="section-head"><div><span class="eyebrow">Knowledge base</span><h1>Инструкция и регламенты</h1><p>Активные пункты, приложения и шаблоны для выполнения типовых процедур.</p></div></div><div class="articles">'+allArticles().map(articleCard).join("")+'</div><div class="upload"><strong>Обновить базу знаний</strong><p style="color:var(--muted)">Администратор может загрузить новую версию Инструкции. Предыдущая версия будет сохранена в архиве.</p><a class="btn" href="#/upload">Загрузить новую версию</a></div></section></main>'+footer()}
-  function allArticles(){return demos.concat(state.articles.map(function(a){return [a.id,a.title,"Инструкция",a.plain||a.text]}))}
-  function article(id){var a=demos.find(function(x){return x[0]===id})||state.articles.find(function(x){return x.id===id});if(!a)return wiki();var apiArticle=!Array.isArray(a),title=apiArticle?a.title:a[1],desc=apiArticle?(a.plain||a.text||""):a[3],body=apiArticle?(a.text||a.plain||desc):a[4],source=apiArticle?((a.doc||"")+(a.version?" · версия "+a.version:"")+(a.point?" · п. "+a.point:"")):"";return header()+'<main class="container wiki-layout">'+sidebar()+'<article class="article"><div class="crumbs"><a href="#/">Обзор</a> / <a href="#/wiki">База знаний</a> / '+esc(title)+'</div><span class="eyebrow">Пункт Инструкции</span><h1>'+esc(title)+'</h1><p class="article-lead">'+esc(desc)+'</p><div class="article-meta">'+(source?"Документ: "+esc(source):"Актуальность проверяется по активной версии документа")+'</div><div class="article-body"><h2>Содержание пункта</h2><p>'+esc(body)+'</p><div class="callout"><b>Важно</b><br>Если ситуация отличается от описанной, задайте уточняющий вопрос помощнику и проверьте связанные пункты и приложения.</div><h2>Проверка результата</h2><p>Убедитесь, что документ соответствует найденным требованиям. При недостаточном основании загрузите проект на проверку или обратитесь к владельцу процесса.</p></div><div style="margin-top:35px;display:flex;gap:10px"><button class="btn" data-help>Полезна ли эта статья? Да</button><a class="btn secondary" href="#/review">Проверить документ</a></div></article><aside class="toc"><b>На этой странице</b><a href="#top">Содержание пункта</a><a href="#top">Проверка результата</a></aside></main>'+footer()}
-  function upload(){return header()+'<main class="container" style="padding-top:60px;max-width:760px"><div class="crumbs"><a href="#/">Обзор</a> / Обновить базу знаний</div><span class="eyebrow">Версионность</span><h1>Загрузить новую версию Инструкции</h1><p class="article-lead">Загрузите PDF, DOCX, TXT или MD с нумерованными пунктами. Новая версия станет активной, а предыдущая останется доступной в архиве.</p><form class="upload" data-upload><label>Название документа<br><input name="doc" required value="Инструкция по документообороту" style="margin:8px 0;padding:10px;width:100%;background:#0c0e12;border:1px solid var(--line);color:var(--text);border-radius:8px"></label><label>Новая версия<br><input name="version" required value="2.0" style="margin:8px 0;padding:10px;width:100%;background:#0c0e12;border:1px solid var(--line);color:var(--text);border-radius:8px"></label><label>Файл Инструкции<br><input name="file" type="file" accept=".pdf,.docx,.txt,.md" required style="margin:12px 0"></label><button class="btn">Активировать версию</button><div class="notice" data-upload-result></div></form></main>'+footer()}
-  function review(){return header()+'<main class="container" style="padding-top:60px;max-width:760px"><div class="crumbs"><a href="#/">Обзор</a> / Проверка черновика</div><span class="eyebrow">Контроль документа</span><h1>Проверить готовый документ</h1><p class="article-lead">Загрузите проект или черновик. Сервис сопоставит фрагменты с активной Инструкцией, покажет релевантность и предложит доработки.</p><form class="upload" data-review><label>Файл проекта<br><input name="file" type="file" accept=".pdf,.docx,.txt,.md" required style="margin:12px 0"></label><button class="btn">Проверить по Инструкции</button><div class="notice" data-review-result></div></form></main>'+footer()}
-  function templates(){return header()+'<main class="container" style="padding-top:60px;max-width:900px"><div class="crumbs"><a href="#/">Обзор</a> / Шаблоны</div><span class="eyebrow">Модульные документы</span><h1>Подготовить черновик</h1><p class="article-lead">Выберите шаблон и ответьте на вопросы помощника. Перед скачиванием он покажет основание и маршрут согласования.</p><div class="articles" data-templates><div class="card">Загрузка шаблонов...</div></div></main>'+footer()}
-  function versions(){return header()+'<main class="container" style="padding-top:60px;max-width:900px"><div class="crumbs"><a href="#/">Обзор</a> / Версии документов</div><span class="eyebrow">Актуальность базы</span><h1>Документы и версии</h1><p class="article-lead">Помощник отвечает только по активным документам, доступным вашей роли.</p><div class="articles" data-versions><div class="card">Загрузка списка версий...</div></div></main>'+footer()}
-  function render(){var hash=location.hash||"#/";var m=hash.match(/^#\/article\/(.+)/);var docs=Boolean(m)||hash.indexOf("#/wiki")===0||hash.indexOf("#/review")===0||hash.indexOf("#/templates")===0||hash.indexOf("#/versions")===0;document.body.className=docs?"docs-page":"";app.innerHTML=m?article(decodeURIComponent(m[1])):hash.indexOf("#/upload")===0?upload():hash.indexOf("#/review")===0?review():hash.indexOf("#/templates")===0?templates():hash.indexOf("#/versions")===0?versions():hash.indexOf("#/wiki")===0?wiki():home();bind()}
-  function bind(){document.querySelectorAll("[data-action=theme]").forEach(function(b){b.onclick=function(){state.theme=state.theme==="dark"?"light":"dark";localStorage.setItem("wiki-theme",state.theme);document.documentElement.dataset.theme=state.theme}});document.querySelectorAll("[data-action=menu]").forEach(function(b){b.onclick=function(){var sidebar=document.querySelector("[data-sidebar]");if(!sidebar){location.hash="#/wiki";return}sidebar.classList.toggle("open")}});document.querySelectorAll("[data-search]").forEach(function(input){input.oninput=function(){state.query=input.value;showResults(input)}});document.querySelectorAll("[data-copy]").forEach(function(b){b.onclick=function(){navigator.clipboard.writeText(b.parentNode.querySelector("code").textContent);b.textContent="Скопировано";setTimeout(function(){b.textContent="Копировать"},1400)}});var form=document.querySelector("[data-upload]");if(form)form.onsubmit=function(e){e.preventDefault();var fd=new FormData(form),out=form.querySelector("[data-upload-result]");out.textContent="Загрузка...";fetch(api+"/admin/kb/upload",{method:"POST",body:fd}).then(function(r){return r.json().then(function(x){return{ok:r.ok,x:x}})}).then(function(r){out.textContent=r.ok?"Готово: активирована версия "+r.x.version+"; пунктов: "+r.x.points:"Ошибка: "+(r.x.detail||"не удалось загрузить")}).catch(function(){out.textContent="Нет связи с сервером"})};var reviewForm=document.querySelector("[data-review]");if(reviewForm)reviewForm.onsubmit=function(e){e.preventDefault();var fd=new FormData(reviewForm),out=reviewForm.querySelector("[data-review-result]");out.textContent="Проверка...";fetch(api+"/documents/review",{method:"POST",body:fd}).then(function(r){return r.json().then(function(x){return{ok:r.ok,x:x}})}).then(function(r){if(!r.ok){out.textContent="Ошибка: "+(r.x.detail||"не удалось проверить");return}var s=r.x.summary;out.innerHTML="<strong>Соответствие: "+s.compliance_percent+"%</strong><br>Проверено фрагментов: "+s.sections+"; найдено оснований: "+s.matched+"; без основания: "+s.unmatched+"<br>"+(r.x.recommendations.length?r.x.recommendations.map(esc).join("<br>"):"Рекомендаций нет.")}).catch(function(){out.textContent="Нет связи с сервером"})};var templateBox=document.querySelector("[data-templates]");if(templateBox)fetch(api+"/templates").then(function(r){return r.json()}).then(function(items){templateBox.innerHTML=items.map(function(t){return '<div class="card"><span class="eyebrow">Версия '+esc(t.version)+'</span><h3>'+esc(t.title)+'</h3><p>'+esc(t.description)+'</p><span class="count">'+t.fields+' полей</span><button class="btn" data-template="'+esc(t.id)+'">Начать заполнение</button>'}).join("");templateBox.querySelectorAll("[data-template]").forEach(function(b){b.onclick=function(){if(window.__docWidget)window.__docWidget.open();else location.hash="#/"}})}).catch(function(){templateBox.innerHTML='<div class="card">Не удалось загрузить шаблоны.</div>'});var versionsBox=document.querySelector("[data-versions]");if(versionsBox)fetch(api+"/kb/documents").then(function(r){return r.json()}).then(function(items){versionsBox.innerHTML=items.map(function(d){return '<div class="card"><span class="eyebrow">'+esc(d.status==="active"?"Активная версия":"Архив")+'</span><h3>'+esc(d.doc)+'</h3><p>Версия '+esc(d.version)+'</p><span class="meta">'+esc(d.date||"Дата не указана")+'</span></div>'}).join("")}).catch(function(){versionsBox.innerHTML='<div class="card">Не удалось загрузить версии.</div>'});document.documentElement.dataset.theme=state.theme}
-  function showResults(input){var box=input.parentNode.querySelector("[data-results]");if(!box||!state.query){if(box)box.innerHTML="";return}var q=state.query.toLowerCase();fetch(api+"/kb/search?q="+encodeURIComponent(state.query)).then(function(r){return r.json()}).then(function(found){var local=allArticles().filter(function(a){return (a[1]+" "+a[2]+" "+a[3]).toLowerCase().indexOf(q)>=0}).slice(0,4);var remote=found.slice(0,6).map(function(x){return [x.id,"п. "+x.point+" — "+x.title,"Инструкция",x.snippet]});var items=remote.concat(local);box.innerHTML=items.length?items.map(function(a){return '<a class="result" href="#/article/'+encodeURIComponent(a[0])+'">'+esc(a[1])+'<small>'+esc(a[2])+'</small></a>'}).join(""):'<div class="result">Ничего не найдено</div>'}).catch(function(){box.innerHTML='<div class="result">Не удалось выполнить поиск</div>'})}
-  function loadArticles(){fetch(api+"/kb/articles").then(function(r){return r.json()}).then(function(items){state.articles=items;render()}).catch(function(){render()})}
-  window.addEventListener("hashchange",render);window.addEventListener("DOMContentLoaded",loadArticles);loadArticles();
-})();
+
+  function esc(value) {
+    return String(value || "").replace(/[&<>"']/g, function (c) {
+      return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c];
+    });
+  }
+  function icon() { return '<span class="search-icon" aria-hidden="true"></span>'; }
+  function header() {
+    return '<header class="topbar">' +
+      '<button class="theme mobile-menu" data-action="menu" type="button">Menu</button>' +
+      '<a class="brand" href="#/"><strong>Wiki</strong></a>' +
+      '<nav class="nav"><a href="#/">Обзор</a><a href="#/wiki">База знаний</a><a href="#/templates">Шаблоны</a><a href="#/review">Проверить</a><a href="#/versions">Версии</a></nav>' +
+      '<label class="top-search">' + icon() + '<input data-search placeholder="Поиск по базе знаний..." value="' + esc(state.query) + '"><div class="results" data-results></div></label>' +
+      '<button class="theme" data-action="theme" type="button">Тема</button></header>';
+  }
+  function footer() { return '<footer class="footer"><div class="container">BankAssistant Wiki</div></footer>'; }
+  function searchBox() {
+    return '<label class="hero-search">' + icon() + '<input data-search placeholder="Поиск по базе знаний..." value="' + esc(state.query) + '"><div class="results" data-results></div></label>';
+  }
+  function categoryCard(c) {
+    return '<a class="card category-card" href="#/wiki?cat=' + encodeURIComponent(c[1]) + '">' +
+      '<span class="category-number">' + c[0] + '</span><h3>' + esc(c[1]) + '</h3><p>' + esc(c[2]) + '</p></a>';
+  }
+  function articleCard(a) {
+    var title = Array.isArray(a) ? a[1] : a.title;
+    var desc = Array.isArray(a) ? a[3] : (a.plain || a.text || "");
+    var label = Array.isArray(a) ? a[2] : ("п. " + (a.point || "—"));
+    return '<a class="card article-card" href="#/article/' + encodeURIComponent(a.id || a[0]) + '">' +
+      '<span class="eyebrow">' + esc(label) + '</span><h3>' + esc(title) + '</h3><p>' + esc(desc) + '</p></a>';
+  }
+  function home() {
+    return header() + '<main><section class="hero container"><span class="eyebrow">BankAssistant Wiki</span>' +
+      '<h1>База знаний</h1><p>Находите нужный пункт инструкции и открывайте его источник.</p>' + searchBox() +
+      '</section><section class="section container"><div class="section-head"><h2>Разделы</h2></div><div class="grid">' +
+      categories.map(categoryCard).join("") + '</div></section><section class="section container"><div class="section-head"><h2>Последние материалы</h2>' +
+      '<a class="btn secondary" href="#/wiki">Все материалы</a></div><div class="articles">' +
+      state.articles.slice(0, 6).map(articleCard).join("") +
+      (state.articles.length ? "" : '<div class="empty">Материалы загружаются…</div>') + '</div></section></main>' + footer();
+  }
+  function wiki() {
+    return header() + '<main class="container wiki-page"><div class="page-head"><span class="eyebrow">BankAssistant Wiki</span>' +
+      '<h1>Все материалы</h1><p>Активные пункты документов, доступные в базе знаний.</p></div><div class="articles">' +
+      state.articles.map(articleCard).join("") + (state.articles.length ? "" : '<div class="empty">Материалы загружаются…</div>') +
+      '</div></main>' + footer();
+  }
+  function article(id) {
+    var item = state.articles.find(function (a) { return a.id === id; });
+    if (!item) return header() + '<main class="container article-page"><div class="empty">Материал не найден.</div></main>' + footer();
+    var source = (item.doc || "") + (item.version ? " · версия " + item.version : "") + (item.point ? " · п. " + item.point : "");
+    return header() + '<main class="container article-page"><div class="crumbs"><a href="#/">Обзор</a> / <a href="#/wiki">База знаний</a></div>' +
+      '<span class="eyebrow">Пункт инструкции · ' + esc(item.point || "—") + '</span><h1>' + esc(item.title) + '</h1>' +
+      '<p class="article-lead">' + esc(item.plain || "") + '</p><div class="article-meta">Источник: ' + esc(source) + '</div>' +
+      '<div class="article-body"><p>' + esc(item.text || item.plain || "") + '</p></div>' +
+      '<div class="article-actions"><a class="btn secondary" href="#/review">Проверить документ</a></div></main>' + footer();
+  }
+  function upload() {
+    return header() + '<main class="container narrow-page"><div class="crumbs"><a href="#/">Обзор</a> / Обновить базу</div>' +
+      '<h1>Загрузить новую версию</h1><form class="upload" data-upload><label>Название документа<input name="doc" required value="Инструкция по документообороту"></label>' +
+      '<label>Новая версия<input name="version" required value="2.0"></label><label>Файл инструкции<input name="file" type="file" accept=".pdf,.docx,.txt,.md" required></label>' +
+      '<button class="btn">Активировать версию</button><div class="notice" data-upload-result></div></form></main>' + footer();
+  }
+  function review() {
+    return header() + '<main class="container narrow-page"><div class="crumbs"><a href="#/">Обзор</a> / Проверка</div>' +
+      '<h1>Проверить документ</h1><p class="article-lead">Сопоставьте проект с активной инструкцией.</p><form class="upload" data-review>' +
+      '<label>Файл проекта<input name="file" type="file" accept=".pdf,.docx,.txt,.md" required></label><button class="btn">Проверить</button>' +
+      '<div class="notice" data-review-result></div></form></main>' + footer();
+  }
+  function templates() {
+    return header() + '<main class="container narrow-page"><div class="crumbs"><a href="#/">Обзор</a> / Шаблоны</div><h1>Шаблоны документов</h1>' +
+      '<div class="articles" data-templates><div class="empty">Загрузка…</div></div></main>' + footer();
+  }
+  function versions() {
+    return header() + '<main class="container narrow-page"><div class="crumbs"><a href="#/">Обзор</a> / Версии</div><h1>Версии документов</h1>' +
+      '<div class="articles" data-versions><div class="empty">Загрузка…</div></div></main>' + footer();
+  }
+  function render() {
+    var hash = location.hash || "#/", match = hash.match(/^#\/article\/(.+)/);
+    app.innerHTML = match ? article(decodeURIComponent(match[1])) :
+      hash.indexOf("#/upload") === 0 ? upload() : hash.indexOf("#/review") === 0 ? review() :
+      hash.indexOf("#/templates") === 0 ? templates() : hash.indexOf("#/versions") === 0 ? versions() :
+      hash.indexOf("#/wiki") === 0 ? wiki() : home();
+    bind();
+  }
+  function showResults(input) {
+    var box = input.parentNode.querySelector("[data-results]");
+    if (!box || !state.query) { if (box) box.innerHTML = ""; return; }
+    fetch(api + "/kb/search?q=" + encodeURIComponent(state.query)).then(function (r) { return r.json(); }).then(function (found) {
+      box.innerHTML = found.length ? found.slice(0, 8).map(function (a) {
+        return '<a class="result" href="#/article/' + encodeURIComponent(a.id) + '">' + esc("п. " + a.point + " — " + a.title) + '<small>' + esc(a.doc) + '</small></a>';
+      }).join("") : '<div class="result">Ничего не найдено</div>';
+    }).catch(function () { box.innerHTML = '<div class="result">Не удалось выполнить поиск</div>'; });
+  }
+  function bind() {
+    document.querySelectorAll("[data-action=theme]").forEach(function (b) {
+      b.onclick = function () { state.theme = state.theme === "dark" ? "light" : "dark"; localStorage.setItem("wiki-theme", state.theme); document.documentElement.dataset.theme = state.theme; };
+    });
+    document.querySelectorAll("[data-action=menu]").forEach(function (b) {
+      b.onclick = function () {
+        var nav = document.querySelector(".nav");
+        if (nav) nav.classList.toggle("open");
+      };
+    });
+    document.querySelectorAll("[data-search]").forEach(function (input) { input.oninput = function () { state.query = input.value; showResults(input); }; });
+    var form = document.querySelector("[data-upload]");
+    if (form) form.onsubmit = function (e) { e.preventDefault(); var out = form.querySelector("[data-upload-result]"); out.textContent = "Загрузка…"; fetch(api + "/admin/kb/upload", {method:"POST", body:new FormData(form)}).then(function (r) { return r.json().then(function (x) { return {ok:r.ok,x:x}; }); }).then(function (r) { out.textContent = r.ok ? "Готово" : "Ошибка: " + (r.x.detail || "не удалось загрузить"); }).catch(function () { out.textContent = "Нет связи с сервером"; }); };
+    var reviewForm = document.querySelector("[data-review]");
+    if (reviewForm) reviewForm.onsubmit = function (e) { e.preventDefault(); var out = reviewForm.querySelector("[data-review-result]"); out.textContent = "Проверка…"; fetch(api + "/documents/review", {method:"POST", body:new FormData(reviewForm)}).then(function (r) { return r.json().then(function (x) { return {ok:r.ok,x:x}; }); }).then(function (r) { if (!r.ok) { out.textContent = "Ошибка: " + (r.x.detail || "не удалось проверить"); return; } out.textContent = "Соответствие: " + r.x.summary.compliance_percent + "%"; }).catch(function () { out.textContent = "Нет связи с сервером"; }); };
+    var templateBox = document.querySelector("[data-templates]");
+    if (templateBox) fetch(api + "/templates").then(function (r) { return r.json(); }).then(function (items) { templateBox.innerHTML = items.map(function (a) { return '<div class="card"><span class="eyebrow">Версия ' + esc(a.version) + '</span><h3>' + esc(a.title) + '</h3><p>' + esc(a.description) + '</p><button class="btn" data-template="' + esc(a.id) + '">Начать заполнение</button></div>'; }).join(""); templateBox.querySelectorAll("[data-template]").forEach(function (b) { b.onclick = function () { if (window.__docWidget) window.__docWidget.open(); }; }); });
+    var versionsBox = document.querySelector("[data-versions]");
+    if (versionsBox) fetch(api + "/kb/documents").then(function (r) { return r.json(); }).then(function (items) { versionsBox.innerHTML = items.map(function (a) { return '<div class="card"><span class="eyebrow">' + esc(a.status === "active" ? "Активная версия" : "Архив") + '</span><h3>' + esc(a.doc) + '</h3><p>Версия ' + esc(a.version) + '</p></div>'; }).join(""); });
+    document.documentElement.dataset.theme = state.theme;
+  }
+  function loadArticles() { fetch(api + "/kb/articles").then(function (r) { return r.json(); }).then(function (items) { state.articles = items; render(); }).catch(function () { render(); }); }
+  window.addEventListener("hashchange", render); window.addEventListener("DOMContentLoaded", loadArticles); loadArticles();
+}());

@@ -72,6 +72,15 @@ def split_points(lines: list[str]) -> list[tuple[str, str]]:
     return [(n, t) for n, t in points]
 
 
+def split_document(lines: list[str]) -> list[tuple[str, str]]:
+    """Разбивает инструкцию на нумерованные пункты или на абзацы."""
+    points = split_points(lines)
+    if points:
+        return points
+    paragraphs = [line.strip() for line in lines if line.strip()]
+    return [(str(index), text) for index, text in enumerate(paragraphs, start=1)]
+
+
 def split_points_with_locations(lines: list[str]) -> list[tuple[str, str, int]]:
     """Разбивает текст на пункты и сохраняет номер первой строки каждого пункта."""
     points: list[list] = []

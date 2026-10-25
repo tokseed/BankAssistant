@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Настройки · BankAssistant</title>
+  <style>
+    :root{color-scheme:dark;--bg:#0d1117;--panel:#161b22;--surface:#21262d;--text:#f0f6fc;--muted:#a7b1bc;--line:#30363d;--accent:#8fd3b8}
+    *{box-sizing:border-box}
+    body{margin:0;min-height:100vh;background:var(--bg);color:var(--text);font-family:"SFMono-Regular","Roboto Mono",ui-monospace,Menlo,Consolas,monospace}
+    main{width:min(920px,calc(100% - 32px));margin:0 auto;padding:38px 0 70px}
+    .top{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:36px}
+    .brand{font-size:22px;font-weight:700}
+    a{color:var(--accent)}
+    .back{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:4px;padding:10px 12px;color:var(--text);text-decoration:none;font-size:13px}
+    .back:hover{border-color:var(--accent);color:var(--accent)}
+    .eyebrow{display:block;color:var(--muted);font-size:12px;letter-spacing:.1em;text-transform:uppercase;margin-bottom:10px}
+    h1{font-size:32px;line-height:1.2;margin:0 0 10px}
+    h2{font-size:17px;margin:0 0 18px}
+    .lead{color:var(--muted);line-height:1.6;margin:0 0 28px}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+    .card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:22px}
+    .wide{grid-column:1/-1}
+    label{display:block;color:var(--muted);font-size:13px;margin:14px 0 7px}
+    input,select{width:100%;border:1px solid var(--line);border-radius:4px;background:var(--surface);color:var(--text);padding:10px;font:inherit;font-size:13px}
+    input:focus,select:focus{outline:2px solid var(--accent);outline-offset:1px}
+    .color-row{display:flex;gap:8px}.color-row input[type=color]{width:48px;padding:3px;height:38px}.color-row input[type=text]{flex:1}
+    .actions{display:flex;align-items:center;gap:12px;margin-top:18px}
+    .btn{border:1px solid var(--accent);border-radius:4px;background:var(--accent);color:#0d1117;padding:10px 14px;font:inherit;font-weight:700;cursor:pointer}
+    .btn.secondary{background:transparent;color:var(--accent)}
+    .btn:hover{filter:brightness(1.08)}
+    .message{color:var(--muted);font-size:12px;min-height:18px}
+    textarea{width:100%;min-height:98px;resize:vertical;border:1px solid var(--line);border-radius:4px;background:#0b0f14;color:#dce5ed;padding:12px;font:12px/1.5 ui-monospace,monospace}
+    .copy-row{display:flex;gap:8px}.copy-row textarea{flex:1}
+    .status{display:inline-block;border:1px solid var(--accent);border-radius:3px;padding:4px 8px;color:var(--accent);font-size:12px}
+    .kb-summary{display:flex;flex-wrap:wrap;gap:24px;margin-bottom:16px;color:var(--muted);font-size:13px}
+    .kb-summary strong{display:block;color:var(--text);font-size:20px;margin-bottom:3px}
+    .files{border-top:1px solid var(--line)}
+    .file{display:grid;grid-template-columns:1fr auto auto;gap:16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line);font-size:13px}
+    .file small{color:var(--muted)}.empty{color:var(--muted);padding:14px 0;font-size:13px}
+    @media(max-width:700px){main{padding-top:24px}.top{align-items:flex-start;flex-direction:column}.grid{grid-template-columns:1fr}.wide{grid-column:auto}.file{grid-template-columns:1fr;gap:4px}.copy-row{display:block}.copy-row .btn{margin-top:8px}}
+  </style>
+</head>
+<body>
+  <main>
+    <div class="top">
+      <div class="brand">BankAssistant</div>
+      <a class="back" href="/chat">← Вернуться в демо чата</a>
+    </div>
+    <span class="eyebrow">Панель управления</span>
+    <h1>Настройки помощника</h1>
+    <p class="lead">Измените параметры виджета, скопируйте embed-код и проверьте состояние локальной RAG-базы.</p>
+
+    <div class="grid">
+      <section class="card">
+        <h2>Конфигурация виджета</h2>
+        <form id="config-form">
+          <label for="theme">Тема по умолчанию</label>
+          <select id="theme" name="theme">
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+            <option value="medium">Medium</option>
+          </select>
+          <label for="color-text">Акцентный цвет</label>
+          <div class="color-row">
+            <input id="color" type="color" value="#8fd3b8" aria-label="Выбор цвета">
+            <input id="color-text" type="text" placeholder="#8FD3B8" pattern="^#[0-9A-Fa-f]{6}$" aria-label="HEX-код цвета">
+          </div>
+          <label for="title">Заголовок виджета</label>
+          <input id="title" name="title" maxlength="80" placeholder="Банк">
+          <div class="actions">
+            <button class="btn" type="submit">Сохранить</button>
+            <span id="config-message" class="message" role="status"></span>
+          </div>
+        </form>
+      </section>
+
+      <section class="card">
+        <h2>Статус RAG</h2>
+        <div id="rag-status"><span class="status">Загрузка…</span></div>
+        <div class="kb-summary" id="kb-summary"></div>
+        <div class="files" id="files"><div class="empty">Загрузка списка файлов…</div></div>
+      </section>
+
+      <section class="card wide">
+        <h2>Embed-код для интегратора</h2>
+        <p class="message">Фрагмент можно вставить на страницу другого банка. Параметры берутся из текущей конфигурации.</p>
+        <div class="copy-row">
+          <textarea id="embed-code" readonly aria-label="Embed-код"></textarea>
+          <button class="btn secondary" id="copy-embed" type="button">Копировать</button>
+        </div>
+        <div id="copy-message" class="message" role="status"></div>
+      </section>
+    </div>
+  </main>
+  <script>
+    (function () {
+      var form = document.getElementById('config-form');
+      var theme = document.getElementById('theme');
+      var color = document.getElementById('color');
+      var colorText = document.getElementById('color-text');
+      var title = document.getElementById('title');
+      var configMessage = document.getElementById('config-message');
+      var embed = document.getElementById('embed-code');
+      var api = '/api';
+
+      function escapeHtml(value) {
+        return String(value || '').replace(/[&<>"']/g, function (c) {
+          return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+        });
+      }
+      function validColor(value) { return /^#[0-9a-f]{6}$/i.test(value); }
+      function updateEmbed() {
+        var attrs = [
+          'src="' + location.origin + '/static/widget.js"',
+          'data-api="' + location.origin + '"',
+          'data-theme="' + escapeHtml(theme.value) + '"',
+          'data-color="' + escapeHtml(colorText.value) + '"',
+          'data-title="' + escapeHtml(title.value) + '"'
+        ];
+        embed.value = '<script ' + attrs.join(' ') + '><\/script>';
+      }
+      function setColor(value) {
+        if (validColor(value)) {
+          color.value = value.toLowerCase();
+          colorText.value = value.toLowerCase();
+        }
+        updateEmbed();
+      }
+      color.addEventListener('input', function () { setColor(color.value); });
+      colorText.addEventListener('input', updateEmbed);
+      theme.addEventListener('change', updateEmbed);
+      title.addEventListener('input', updateEmbed);
+
+      function renderConfig(value) {
+        value = value || {};
+        theme.value = value.theme || 'medium';
+        title.value = value.title || 'Банк';
+        setColor(value.color || '#8fd3b8');
+      }
+      fetch(api + '/widget-config').then(function (r) { return r.json(); }).then(renderConfig).catch(function () {
+        renderConfig({theme:'medium', title:'Банк', color:'#8fd3b8'});
+      });
+
+      form.addEventListener('submit', function (event) {
+        event.preventDefault();
+        configMessage.textContent = 'Сохранение…';
+        var payload = {theme: theme.value, color: colorText.value.trim(), title: title.value.trim()};
+        fetch(api + '/widget-config', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)})
+          .then(function (r) { return r.json().then(function (body) { return {ok:r.ok, body:body}; }); })
+          .then(function (result) {
+            if (!result.ok) throw new Error(result.body.detail || 'Не удалось сохранить');
+            renderConfig(result.body);
+            configMessage.textContent = 'Сохранено';
+          })
+          .catch(function (error) { configMessage.textContent = error.message; });
+      });
+
+      document.getElementById('copy-embed').addEventListener('click', function () {
+        navigator.clipboard.writeText(embed.value).then(function () {
+          document.getElementById('copy-message').textContent = 'Embed-код скопирован';
+        }).catch(function () {
+          embed.select();
+          document.execCommand('copy');
+          document.getElementById('copy-message').textContent = 'Embed-код скопирован';
+        });
+      });
+
+      function renderKb(status) {
+        document.getElementById('rag-status').innerHTML = '<span class="status">' + (status.status === 'ready' ? 'Индекс готов' : 'Проверка') + '</span>';
+        document.getElementById('kb-summary').innerHTML =
+          '<div><strong>' + status.active_chunks + '</strong>активных фрагментов</div>' +
+          '<div><strong>' + status.documents.length + '</strong>записей о файлах</div>' +
+          '<div><strong>' + escapeHtml(status.engine) + '</strong>движок</div>';
+        var files = document.getElementById('files');
+        files.innerHTML = status.documents.length ? status.documents.map(function (file) {
+          return '<div class="file"><span>' + escapeHtml(file.doc) + '<br><small>Версия ' + escapeHtml(file.version || '—') + '</small></span>' +
+            '<small>' + escapeHtml(file.status || 'unknown') + '</small><small>' + file.chunks + ' фрагм.</small></div>';
+        }).join('') : '<div class="empty">Файлы базы знаний не найдены.</div>';
+      }
+      fetch(api + '/kb/status').then(function (r) { return r.json(); }).then(renderKb).catch(function () {
+        document.getElementById('rag-status').innerHTML = '<span class="message">Не удалось получить статус RAG</span>';
+      });
+    }());
+  </script>
+</body>
+</html>

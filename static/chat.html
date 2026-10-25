@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Демо чата · BankAssistant</title>
+  <style>
+    :root{color-scheme:dark}
+    *{box-sizing:border-box}
+    html,body{width:100%;min-height:100%;margin:0}
+    body{background:#0d1117;color:#f0f6fc;font-family:"SFMono-Regular","Roboto Mono",ui-monospace,Menlo,Consolas,monospace;overflow:hidden}
+    .ambient-logo{position:fixed;inset:76px 0 0;display:grid;place-items:center;pointer-events:none;z-index:0}
+    .ambient-logo img{width:min(480px,48vw);height:auto;opacity:.19;mix-blend-mode:screen;filter:saturate(.9);border-radius:28px}
+    .corner-logo{position:fixed;width:96px;height:74px;object-fit:cover;object-position:center;opacity:.14;mix-blend-mode:screen;border-radius:14px;pointer-events:none;z-index:0}
+    .corner-logo.left{left:24px;bottom:24px}.corner-logo.right{right:24px;top:104px}
+    .toolbar{position:fixed;top:0;left:0;right:0;z-index:10;display:flex;align-items:center;gap:18px;padding:14px 20px;background:rgba(13,17,23,.94);border-bottom:1px solid #30363d}
+    .brand{font-weight:700;margin-right:auto}
+    .hint{color:#a7b1bc;font-size:12px}
+    .themes{display:flex;gap:6px}
+    .theme{border:1px solid #30363d;background:#161b22;color:#a7b1bc;border-radius:4px;padding:7px 10px;font:inherit;font-size:12px;cursor:pointer}
+    .theme:hover,.theme.active{border-color:#8fd3b8;color:#8fd3b8}
+    .theme:focus-visible{outline:2px solid #ffbf47;outline-offset:2px}
+    @media(max-width:650px){.toolbar{align-items:flex-start;flex-wrap:wrap}.brand{width:100%}.hint{display:none}}
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <div class="brand">BankAssistant · демо чата</div>
+    <div class="hint">Тема виджета:</div>
+    <div class="themes" aria-label="Выбор темы">
+      <button class="theme" data-theme="light" type="button">Light</button>
+      <button class="theme" data-theme="dark" type="button">Dark</button>
+      <button class="theme" data-theme="medium" type="button">Medium</button>
+    </div>
+  </div>
+  <div class="ambient-logo" aria-hidden="true">
+    <img src="/static/bank-logo.jpg" alt="">
+  </div>
+  <img class="corner-logo left" src="/static/bank-logo.jpg" alt="" aria-hidden="true">
+  <img class="corner-logo right" src="/static/bank-logo.jpg" alt="" aria-hidden="true">
+  <script>
+    (function () {
+      var selected = new URLSearchParams(location.search).get('theme') || 'medium';
+      document.querySelectorAll('[data-theme]').forEach(function (button) {
+        button.classList.toggle('active', button.dataset.theme === selected);
+        button.addEventListener('click', function () {
+          location.search = '?theme=' + encodeURIComponent(button.dataset.theme);
+        });
+      });
+    }());
+  </script>
+  <script src="/static/widget.js" data-theme="medium" data-open="true"></script>
+</body>
+</html>

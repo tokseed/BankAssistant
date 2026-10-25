@@ -37,6 +37,53 @@ INTENT_RE = re.compile(r"(нужен|нужна|нужно|нужны|соста
 QUESTION_RE = re.compile(r"(\?|^(как|что|какой|какая|какие|когда|сколько|почему|зачем|кто|где|куда|можно ли|нужно ли))")
 LABEL_BACK = "Назад"
 
+XSS_RE = re.compile(r"(<\s*/?\s*script\b|javascript\s*:|on\w+\s*=|<[^>]+>)", re.I)
+INJECTION_RE = re.compile(
+    r"(ignore|system\s+prompt|developer\s+message|jailbreak|dan\b|"
+    r"игнорируй|забудь|системн\w*\s+промпт|служебн\w*\s+инструкц)",
+    re.I,
+)
+GIBBERISH_RE = re.compile(
+    r"^(?:asdf+|qwerty+|йцукен+|([a-zа-я])\1{3,}|(.{1,3})\2{2,})$",
+    re.I,
+)
+VOWELS_RE = re.compile(r"[аеёиоуыэюяaeiouy]", re.I)
+SYLLABLE_RE = re.compile(r"([а-яёa-z]{2,4})\1{1,}", re.I)
+KEYBOARD_MASH_RE = re.compile(
+    r"(?:пвап|вап|цук|кен|йц|qwe|wer|asd|sdf|zxc|xcv)",
+    re.I,
+)
+
+
+def validate_input(text: str, *, allow_short_choice: bool = False) -> str | None:
+    """Дешёвая проверка до поиска в KB/RAG. Возвращает причину отказа."""
+    value = text.strip()
+    low = value.lower()
+    if low in CANCEL | BACK | SKIP | YES or low in {LABEL_BACK.lower()}:
+        return None
+    if len(value) < 2 and not (allow_short_choice and value.isdigit()):
+        return "Сообщение слишком короткое. Опишите вопрос или ответ подробнее."
+    if len(value) > 4000:
+        return "Сообщение слишком длинное. Сократите его до 4000 символов."
+    if "\x00" in value or XSS_RE.search(value):
+        return "Не могу обработать HTML/скрипты. Отправьте обычный текст."
+    if is_prompt_injection(value) or INJECTION_RE.search(value):
+        return "Не могу изменить правила помощника. Задайте вопрос по инструкции."
+    if GIBBERISH_RE.fullmatch(value) or not re.search(r"[a-zа-яё0-9]", low):
+        return "Похоже на случайный набор символов. Введите осмысленный текст."
+    letters = re.findall(r"[a-zа-яё]", low)
+    if len(letters) >= 6:
+        vowels = len(VOWELS_RE.findall(low))
+        vowel_ratio = vowels / len(letters)
+        if vowel_ratio < 0.08 or vowel_ratio > 0.85:
+            return "Похоже на случайный набор символов. Введите осмысленный текст."
+        if SYLLABLE_RE.search(low) or KEYBOARD_MASH_RE.search(low):
+            return "Похоже на случайный набор символов. Введите осмысленный текст."
+    special = sum(not (char.isalnum() or char.isspace()) for char in value)
+    if special / max(len(value), 1) > 0.55:
+        return "Используйте обычный текст без большого количества спецсимволов."
+    return None
+
 
 class ValidationError(Exception):
     pass
@@ -139,8 +186,21 @@ class Engine:
         return [
             {"id": t["id"], "title": t["title"], "version": t.get("version", "1.0"),
              "description": t.get("description", ""), "fields": len(t["fields"])}
-            for t in self._visible(role)
+            for t in self._visible(role) if t.get("legacy_list", True)
         ]
+
+    def document_types(self, role: str = "employee") -> list[dict]:
+        return [
+            {"id": t["id"], "title": t["title"], "description": t.get("description", ""),
+             "available": t["id"] in {v["id"] for v in self._visible(role)}}
+            for t in self.templates.values() if t.get("quick_select")
+        ]
+
+    def has_session(self, sid: str, role: str) -> bool:
+        with self._lock:
+            self._purge()
+            session = self._sessions.get(sid)
+            return bool(session and session.role == role)
 
     def start(self, template_id: str | None = None, role: str = "employee") -> dict:
         with self._lock:
@@ -166,8 +226,14 @@ class Engine:
             text = text.strip()
             low = text.lower()
 
-            if is_prompt_injection(text):
-                return self._to_idle(s, "Я не могу изменить правила помощника. Задайте вопрос по инструкции или выберите документ.")
+            invalid = validate_input(text, allow_short_choice=s.state in {"collect", "choose"})
+            if invalid:
+                options = None
+                messages = [invalid]
+                if s.state == "collect":
+                    ask, options = self._ask(s)
+                    messages.append(ask[0])
+                return self._reply(s, messages, options)
             if low in CANCEL:
                 return self._to_idle(s, "Хорошо, начнём заново. О чём спросить или какой документ подготовить?")
             if s.state == "collect":
@@ -211,6 +277,7 @@ class Engine:
             "state": s.state,
             "messages": messages,
             "options": options,
+            "document_types": self.document_types(s.role) if s.state == "idle" else [],
             "sources": sources or [],
             "progress": progress,
             "download_url": f"/api/sessions/{s.id}/document" if download else None,
@@ -238,7 +305,7 @@ class Engine:
         low = text.lower().strip()
         if low.isdigit() and 1 <= int(low) <= len(items):
             return items[int(low) - 1]
-        low = low.removeprefix("заполнить:").strip()
+        low = low.removeprefix("заполнить:").removeprefix("подготовить:").strip()
         for t in items:
             if low in (t["id"], t["title"].lower()):
                 return t

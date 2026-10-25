@@ -8,7 +8,9 @@ import logging
 import os
 import re
 import tempfile
+import time
 from pathlib import Path
+from threading import Lock
 
 # Load local .env before reading configuration. Existing environment variables win.
 ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
@@ -27,7 +29,7 @@ from pydantic import BaseModel, Field
 
 from .dialog import Engine
 from .compliance import ALLOWED_SUFFIXES, MAX_DRAFT_BYTES, review_draft
-from .ingest import document_slug, read_lines, split_points
+from .ingest import document_slug, read_lines, split_document, split_points
 from .knowledge import KnowledgeBase, LocalRAGAnswerer, make_answerer
 from .render import BASE_DIR, load_templates, render_document
 
@@ -49,13 +51,31 @@ app = FastAPI(title="Помощник по регламентам: API", version
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ORIGINS,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "PUT", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization", "X-Admin-Token"],
     expose_headers=["Content-Disposition"],
     allow_credentials=False,
+    max_age=600,
 )
 
+@app.middleware("http")
+async def security_headers(request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    response.headers.setdefault("Cross-Origin-Resource-Policy", "cross-origin")
+    return response
+
 kb = KnowledgeBase(Path(os.getenv("KB_PATH", BASE_DIR / "kb" / "chunks.json")))
+WIDGET_CONFIG_PATH = Path(os.getenv("WIDGET_CONFIG_PATH", BASE_DIR / "config" / "widget.json"))
+WIDGET_CONFIG_LOCK = Lock()
+WIDGET_CONFIG_DEFAULT = {
+    "theme": "medium",
+    "color": "",
+    "title": "Банк",
+}
 engine = Engine(
     load_templates(),
     renderer=lambda tpl, answers, sid: render_document(tpl, answers, OUT_DIR, sid),
@@ -87,9 +107,88 @@ class ChatIn(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
 
 
+class WidgetConfigIn(BaseModel):
+    theme: str = Field(default="medium")
+    color: str = Field(default="")
+    title: str = Field(default="Банк", max_length=80)
+
+
+def read_widget_config() -> dict[str, str]:
+    """Returns persisted widget defaults, falling back safely for a new install."""
+    with WIDGET_CONFIG_LOCK:
+        try:
+            raw = json.loads(WIDGET_CONFIG_PATH.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            raw = {}
+    return {
+        "theme": raw.get("theme") if raw.get("theme") in {"light", "dark", "medium"} else WIDGET_CONFIG_DEFAULT["theme"],
+        "color": raw.get("color") if isinstance(raw.get("color"), str) and re.fullmatch(r"#[0-9A-Fa-f]{6}", raw["color"]) else "",
+        "title": str(raw.get("title") or WIDGET_CONFIG_DEFAULT["title"])[:80],
+    }
+
+
+def write_widget_config(config: dict[str, str]) -> dict[str, str]:
+    WIDGET_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    temp = WIDGET_CONFIG_PATH.with_suffix(".tmp")
+    with WIDGET_CONFIG_LOCK:
+        temp.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        temp.replace(WIDGET_CONFIG_PATH)
+    return config
+
+
+def require_admin(x_admin_token: str | None) -> None:
+    if ADMIN_TOKEN and not hmac.compare_digest(ADMIN_TOKEN, x_admin_token or ""):
+        raise HTTPException(403, "Нет доступа")
+
+
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/api/widget-config")
+@app.get("/api/config/widget")
+@app.get("/api/config")
+def widget_config():
+    """Public defaults read by the embedded widget when attributes are omitted."""
+    return read_widget_config()
+
+
+@app.put("/api/widget-config")
+@app.put("/api/config/widget")
+@app.put("/api/config")
+def update_widget_config(body: WidgetConfigIn, x_admin_token: str | None = Header(None)):
+    """Saves the defaults used by newly embedded widgets."""
+    require_admin(x_admin_token)
+    theme = body.theme.lower().strip()
+    color = body.color.strip()
+    title = body.title.strip()
+    if theme not in {"light", "dark", "medium"}:
+        raise HTTPException(422, "Тема должна быть light, dark или medium")
+    if color and not re.fullmatch(r"#[0-9A-Fa-f]{6}", color):
+        raise HTTPException(422, "Акцентный цвет должен быть в формате #RRGGBB")
+    if not title:
+        raise HTTPException(422, "Укажите заголовок виджета")
+    return write_widget_config({"theme": theme, "color": color, "title": title})
+
+
+@app.get("/api/kb/status")
+def kb_status(role: str = Depends(current_role)):
+    """Summary for the settings page; does not expose inaccessible chunks."""
+    visible = [chunk for chunk in kb.chunks if not chunk.access or role in chunk.access]
+    docs = []
+    for document in kb.documents():
+        doc = document.get("doc", "")
+        version = document.get("version", "")
+        chunks = sum(1 for chunk in visible if chunk.doc == doc and chunk.version == version)
+        docs.append({**document, "chunks": chunks})
+    return {
+        "status": "ready",
+        "engine": "local_rag",
+        "documents": docs,
+        "total_chunks": len(visible),
+        "active_chunks": sum(1 for chunk in visible if chunk.status == "active"),
+    }
 
 
 @app.post("/api/chat")
@@ -116,6 +215,12 @@ async def chat(body: ChatIn, role: str = Depends(current_role)):
 @app.get("/api/templates")
 def templates(role: str = Depends(current_role)):
     return engine.list_templates(role)
+
+
+@app.get("/api/document-types")
+def document_types(role: str = Depends(current_role)):
+    """Типы документов для быстрых кнопок в чате."""
+    return engine.document_types(role)
 
 
 @app.get("/api/kb/documents")
@@ -244,6 +349,90 @@ async def review_document(
             temp_path.unlink(missing_ok=True)
 
 
+@app.post("/api/sessions/{sid}/files")
+async def upload_chat_file(
+    sid: str,
+    file: UploadFile = File(...),
+    role: str = Depends(current_role),
+):
+    """Индексирует файл, загруженный из чата, в локальной базе знаний."""
+    if not engine.has_session(sid, role):
+        raise HTTPException(404, "Сессия не найдена или истекла")
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in {".pdf", ".docx", ".txt"}:
+        raise HTTPException(415, "Поддерживаются только .pdf, .docx и .txt")
+
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp:
+            temp_path = Path(temp.name)
+            total = 0
+            while chunk := await file.read(64 * 1024):
+                total += len(chunk)
+                if total > MAX_DRAFT_BYTES:
+                    raise HTTPException(413, "Файл слишком большой: максимум 5 МБ")
+                temp.write(chunk)
+
+        # Проверяем документ до индексации: иначе поиск мог бы сопоставить
+        # документ с самим собой и показать завышенное соответствие.
+        review = review_draft(temp_path, kb, role)
+        points = split_document(read_lines(temp_path))
+        if not points:
+            raise HTTPException(422, "В документе нет текста для индексации")
+
+        doc = f"Загрузка из чата: {file.filename} ({role})"
+        version = "chat-" + str(time.time_ns())
+        data = json.loads(kb.path.read_text(encoding="utf-8"))
+        for item in data["chunks"]:
+            if item["doc"] == doc and item["status"] == "active":
+                item["status"] = "archived"
+        for item in data["docs"]:
+            if item["doc"] == doc and item["status"] == "active":
+                item["status"] = "archived"
+        slug = document_slug(doc)
+        for point, text in points:
+            data["chunks"].append({
+                "id": f"{slug}-v{version}-{point}",
+                "doc": doc,
+                "version": version,
+                "point": point,
+                "title": text[:90],
+                "text": text,
+                "plain": "",
+                "template": None,
+                "access": [role],
+                "status": "active",
+                "filename": file.filename,
+            })
+        data["docs"].append({"doc": doc, "version": version, "status": "active"})
+        kb.path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        kb.load()
+        return {
+            "messages": [
+                f"Файл «{file.filename}» загружен и проиндексирован ({len(points)} фрагментов).",
+                (
+                    "Полный анализ завершён: соответствие "
+                    f"{review['summary']['compliance_percent']}%. "
+                    f"Проверено разделов: {review['summary']['sections']}; "
+                    f"найдено оснований: {review['summary']['matched']}; "
+                    f"без основания: {review['summary']['unmatched']}."
+                ),
+            ],
+            "document": file.filename,
+            "points": len(points),
+            "review": review,
+        }
+    except HTTPException:
+        raise
+    except (OSError, ValueError, RuntimeError):
+        logging.getLogger("docgen.api").exception("Chat file indexing failed")
+        raise HTTPException(422, "Не удалось прочитать или проиндексировать файл")
+    finally:
+        await file.close()
+        if temp_path:
+            temp_path.unlink(missing_ok=True)
+
+
 @app.post("/api/admin/kb/reload")
 def kb_reload(x_admin_token: str | None = Header(None)):
     """Применить новую версию Инструкции без перезапуска (после python -m app.ingest)."""
@@ -282,6 +471,22 @@ def download(sid: str, role: str = Depends(current_role)):
 
 @app.get("/", include_in_schema=False)
 def demo():
+    return FileResponse(BASE_DIR / "static" / "demo.html")
+
+
+@app.get("/chat", include_in_schema=False)
+def chat():
+    """Отдельный адрес для тестирования виджета и его тем."""
+    return FileResponse(BASE_DIR / "static" / "chat.html")
+
+
+@app.get("/settings", include_in_schema=False)
+def settings():
+    return FileResponse(BASE_DIR / "static" / "settings.html")
+
+
+@app.get("/wiki", include_in_schema=False)
+def wiki():
     return FileResponse(BASE_DIR / "static" / "wiki.html")
 
 

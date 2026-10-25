@@ -25,7 +25,23 @@ HOOKS = {"memo": _deadline_default}
 
 def build_context(template: dict, answers: dict) -> dict:
     ctx = dict(answers)
+    # Дополнительный контекст может приходить от диалога/RAG без изменения шаблона.
+    for key in ("context", "_context", "rag_context", "_rag_context"):
+        extra = answers.get(key)
+        if isinstance(extra, dict):
+            ctx.update(extra)
     ctx["today"] = date.today().strftime("%d.%m.%Y")
+    ctx["has_deadline"] = bool(ctx.get("deadline"))
+    rows = ctx.get("items") or ctx.get("rows") or []
+    ctx["items"] = rows if isinstance(rows, list) else []
+    ctx["has_items"] = bool(ctx["items"])
+    # Доступно в docxtpl как {% if conditions.has_deadline %} и
+    # {% for row in tables.items %}.
+    ctx["conditions"] = {
+        "has_deadline": ctx["has_deadline"],
+        "has_items": ctx["has_items"],
+    }
+    ctx["tables"] = {"items": ctx["items"]}
     hook = HOOKS.get(template["id"])
     if hook:
         ctx.update(hook(ctx))
