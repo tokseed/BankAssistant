@@ -5,27 +5,34 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Демо чата · BankAssistant</title>
   <style>
-    :root{color-scheme:dark}
+    :root{color-scheme:dark;--page-bg:#0d1117;--page-text:#f0f6fc;--page-toolbar:rgba(13,17,23,.94);--page-panel:#161b22;--page-muted:#a7b1bc;--page-border:#30363d;--page-accent:#8fd3b8}
+    :root[data-page-theme="light"]{color-scheme:light;--page-bg:#f8f6f0;--page-text:#17211d;--page-toolbar:rgba(248,246,240,.94);--page-panel:#fff;--page-muted:#59645e;--page-border:#dedcd4;--page-accent:#24483f}
+    :root[data-page-theme="medium"]{color-scheme:dark;--page-bg:#1e293b;--page-text:#f4f7fa;--page-toolbar:rgba(30,41,59,.94);--page-panel:#283548;--page-muted:#b8c3d0;--page-border:#4a5b70;--page-accent:#b7d7c9}
     *{box-sizing:border-box}
     html,body{width:100%;min-height:100%;margin:0}
-    body{background:#0d1117;color:#f0f6fc;font-family:"SFMono-Regular","Roboto Mono",ui-monospace,Menlo,Consolas,monospace;overflow:hidden}
+    body{background:var(--page-bg);color:var(--page-text);font-family:"SFMono-Regular","Roboto Mono",ui-monospace,Menlo,Consolas,monospace;overflow:hidden;transition:background-color .2s,color .2s}
     .ambient-logo{position:fixed;inset:76px 0 0;display:grid;place-items:center;pointer-events:none;z-index:0}
     .ambient-logo img{width:min(480px,48vw);height:auto;opacity:.19;mix-blend-mode:screen;filter:saturate(.9);border-radius:28px}
     .corner-logo{position:fixed;width:96px;height:74px;object-fit:cover;object-position:center;opacity:.14;mix-blend-mode:screen;border-radius:14px;pointer-events:none;z-index:0}
     .corner-logo.left{left:24px;bottom:24px}.corner-logo.right{right:24px;top:104px}
-    .toolbar{position:fixed;top:0;left:0;right:0;z-index:10;display:flex;align-items:center;gap:18px;padding:14px 20px;background:rgba(13,17,23,.94);border-bottom:1px solid #30363d}
-    .brand{font-weight:700;margin-right:auto}
-    .hint{color:#a7b1bc;font-size:12px}
+    .toolbar{position:fixed;top:0;left:0;right:0;z-index:10;display:flex;align-items:center;gap:18px;padding:14px 20px;background:var(--page-toolbar);border-bottom:1px solid var(--page-border)}
+    .brand{display:flex;align-items:center;margin-right:auto;height:38px}
+    .brand-logo{display:block;width:auto;height:38px;max-width:58px;object-fit:contain}
+    .brand-caption{margin-left:10px;font-weight:700}
+    .hint{color:var(--page-muted);font-size:12px}
     .themes{display:flex;gap:6px}
-    .theme{border:1px solid #30363d;background:#161b22;color:#a7b1bc;border-radius:4px;padding:7px 10px;font:inherit;font-size:12px;cursor:pointer}
-    .theme:hover,.theme.active{border-color:#8fd3b8;color:#8fd3b8}
+    .theme{border:1px solid var(--page-border);background:var(--page-panel);color:var(--page-muted);border-radius:4px;padding:7px 10px;font:inherit;font-size:12px;cursor:pointer}
+    .theme:hover,.theme.active{border-color:var(--page-accent);color:var(--page-accent)}
     .theme:focus-visible{outline:2px solid #ffbf47;outline-offset:2px}
     @media(max-width:650px){.toolbar{align-items:flex-start;flex-wrap:wrap}.brand{width:100%}.hint{display:none}}
   </style>
 </head>
 <body>
   <div class="toolbar">
-    <div class="brand">BankAssistant · демо чата</div>
+    <div class="brand" aria-label="BankAssistant — демо чата">
+      <img class="brand-logo" src="/static/bank-logo-mark.png" alt="BankAssistant">
+      <span class="brand-caption">· демо чата</span>
+    </div>
     <div class="hint">Тема виджета:</div>
     <div class="themes" aria-label="Выбор темы">
       <button class="theme" data-theme="light" type="button">Light</button>
@@ -40,15 +47,23 @@
   <img class="corner-logo right" src="/static/bank-logo.jpg" alt="" aria-hidden="true">
   <script>
     (function () {
-      var selected = new URLSearchParams(location.search).get('theme') || 'medium';
+      var storageKey = 'bankassistant-page-theme';
+      var selected = localStorage.getItem(storageKey) || 'dark';
+      document.documentElement.dataset.pageTheme = selected;
       document.querySelectorAll('[data-theme]').forEach(function (button) {
         button.classList.toggle('active', button.dataset.theme === selected);
         button.addEventListener('click', function () {
-          location.search = '?theme=' + encodeURIComponent(button.dataset.theme);
+          selected = button.dataset.theme;
+          document.documentElement.dataset.pageTheme = selected;
+          localStorage.setItem(storageKey, selected);
+          document.querySelectorAll('[data-theme]').forEach(function (item) {
+            item.classList.toggle('active', item.dataset.theme === selected);
+          });
         });
       });
     }());
   </script>
-  <script src="/static/widget.js" data-theme="medium" data-open="true"></script>
+  <!-- Тема страницы управляется выше; тема чат-бота берётся из настроек виджета. -->
+  <script src="/static/widget.js" data-open="true"></script>
 </body>
 </html>

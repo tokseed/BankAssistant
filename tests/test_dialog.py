@@ -6,6 +6,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from app.dialog import Engine, parse_value, ValidationError
+from app.feedback import FeedbackStore
 from app.knowledge import KnowledgeBase, ExtractiveAnswerer, LocalRAGAnswerer, mask_pii
 from app.render import load_templates, build_context
 
@@ -51,6 +52,28 @@ def test_no_answer_is_honest():
     sid = e.start()["session_id"]
     r = e.handle(sid, "Какой курс доллара сегодня?")
     assert r["sources"] == [] and "нет информации" in r["messages"][0]
+
+
+def test_feedback_correction_is_reused():
+    store = FeedbackStore(Path(tempfile.mkdtemp()) / "feedback.jsonl")
+    e = Engine(
+        load_templates(),
+        fake_renderer,
+        KnowledgeBase(ROOT / "kb" / "chunks.json"),
+        ExtractiveAnswerer(),
+        feedback_store=store,
+    )
+    sid = e.start()["session_id"]
+    e.handle(sid, "Какой курс доллара сегодня?")
+    e.record_feedback(
+        sid,
+        "employee",
+        "negative",
+        "Для текущего курса нужно открыть официальный источник банка.",
+    )
+    sid = e.start()["session_id"]
+    result = e.handle(sid, "Какой курс доллара сегодня?")
+    assert "официальный источник банка" in result["messages"][0]
 
 
 def test_local_rag_answerer_uses_only_sources():

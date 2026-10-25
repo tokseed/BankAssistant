@@ -29,8 +29,9 @@ from pydantic import BaseModel, Field
 
 from .dialog import Engine
 from .compliance import ALLOWED_SUFFIXES, MAX_DRAFT_BYTES, review_draft
+from .feedback import FeedbackStore
 from .ingest import document_slug, read_lines, split_document, split_points
-from .knowledge import KnowledgeBase, LocalRAGAnswerer, make_answerer
+from .knowledge import KnowledgeBase, make_answerer
 from .render import BASE_DIR, load_templates, render_document
 
 logging.basicConfig(level=logging.INFO)
@@ -76,12 +77,16 @@ WIDGET_CONFIG_DEFAULT = {
     "color": "",
     "title": "Банк",
 }
+FEEDBACK_STORE = FeedbackStore(
+    Path(os.getenv("FEEDBACK_PATH", BASE_DIR / "feedback" / "feedback.jsonl"))
+)
 engine = Engine(
     load_templates(),
     renderer=lambda tpl, answers, sid: render_document(tpl, answers, OUT_DIR, sid),
     kb=kb,
     answerer=make_answerer(),
     ttl=int(os.getenv("SESSION_TTL", "1800")),
+    feedback_store=FEEDBACK_STORE,
 )
 
 
@@ -105,6 +110,12 @@ class MessageIn(BaseModel):
 
 class ChatIn(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
+
+
+class FeedbackIn(BaseModel):
+    rating: str = Field(pattern="^(positive|negative)$")
+    correction: str = Field(default="", max_length=2000)
+    answer_id: str = Field(default="", max_length=64)
 
 
 class WidgetConfigIn(BaseModel):
@@ -194,12 +205,16 @@ def kb_status(role: str = Depends(current_role)):
 @app.post("/api/chat")
 async def chat(body: ChatIn, role: str = Depends(current_role)):
     """Direct chat endpoint that uses the same local knowledge search as sessions."""
-    if not isinstance(engine.answerer, LocalRAGAnswerer):
-        raise HTTPException(503, "AI API не настроен")
     try:
         hits = await asyncio.to_thread(engine.kb.search, body.message, role)
         good = [hit for hit in hits if hit.relevance >= engine.kb.min_relevance]
         if not good:
+            general_chat = getattr(engine.answerer, "general_chat", None)
+            if general_chat is not None:
+                return {
+                    "message": await asyncio.to_thread(general_chat, body.message),
+                    "sources": [],
+                }
             return {
                 "message": "В базе знаний нет информации по этому вопросу. "
                 "Уточните название документа или пункт инструкции.",
@@ -458,6 +473,39 @@ def send_message(sid: str, body: MessageIn, role: str = Depends(current_role)):
         return engine.handle(sid, body.text, role)
     except KeyError:
         raise HTTPException(404, "Сессия не найдена или истекла")
+
+
+@app.post("/api/sessions/{sid}/feedback")
+def session_feedback(sid: str, body: FeedbackIn, role: str = Depends(current_role)):
+    try:
+        record = engine.record_feedback(
+            sid, role, body.rating, body.correction, body.answer_id
+        )
+        return {
+            "status": "saved",
+            "learning": bool(record.get("correction")),
+            "message": (
+                "Спасибо. Исправление сохранено и будет использоваться "
+                "в похожих вопросах."
+                if record.get("correction")
+                else "Спасибо. Оценка сохранена для анализа."
+            ),
+        }
+    except KeyError:
+        raise HTTPException(404, "Сессия не найдена или истекла")
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    except RuntimeError:
+        raise HTTPException(503, "Обратная связь временно недоступна")
+
+
+@app.get("/api/admin/feedback")
+def feedback_list(
+    limit: int = 100,
+    x_admin_token: str | None = Header(None),
+):
+    require_admin(x_admin_token)
+    return FEEDBACK_STORE.list_recent(max(1, min(limit, 500)))
 
 
 @app.get("/api/sessions/{sid}/document")

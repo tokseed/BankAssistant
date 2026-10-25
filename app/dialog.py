@@ -18,7 +18,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from .knowledge import KnowledgeBase, is_model_refusal, is_prompt_injection, stems
+from .feedback import FeedbackStore
+from .knowledge import KnowledgeBase, is_prompt_injection, stems
 
 log = logging.getLogger("docgen.dialog")
 
@@ -51,6 +52,12 @@ VOWELS_RE = re.compile(r"[аеёиоуыэюяaeiouy]", re.I)
 SYLLABLE_RE = re.compile(r"([а-яёa-z]{2,4})\1{1,}", re.I)
 KEYBOARD_MASH_RE = re.compile(
     r"(?:пвап|вап|цук|кен|йц|qwe|wer|asd|sdf|zxc|xcv)",
+    re.I,
+)
+CASUAL_RE = re.compile(
+    r"^(привет|здравствуйте|добрый день|доброе утро|добрый вечер|"
+    r"спасибо|благодарю|пока|до свидания|кто ты|что ты умеешь|"
+    r"как ты можешь помочь|что ты можешь)$",
     re.I,
 )
 
@@ -151,6 +158,10 @@ class Session:
     answers: dict = field(default_factory=dict)
     file_path: Path | None = None
     pending: str | None = None  # вопрос, ожидающий уточнения
+    last_question: str = ""
+    last_answer: str = ""
+    last_sources: list[dict] = field(default_factory=list)
+    last_answer_id: str = ""
     touched: float = field(default_factory=time.time)
 
 
@@ -165,6 +176,7 @@ class Engine:
         max_sessions: int = 2000,
         vector_search=None,
         query_logger=None,
+        feedback_store: FeedbackStore | None = None,
     ):
         self.templates = templates
         self.renderer = renderer
@@ -174,6 +186,7 @@ class Engine:
         self.max_sessions = max_sessions
         self.vector_search = vector_search
         self.query_logger = query_logger
+        self.feedback_store = feedback_store
         self._sessions: dict[str, Session] = {}
         self._lock = threading.Lock()
         self._tpl_stems = {
@@ -202,6 +215,35 @@ class Engine:
             session = self._sessions.get(sid)
             return bool(session and session.role == role)
 
+    def record_feedback(
+        self,
+        sid: str,
+        role: str,
+        rating: str,
+        correction: str = "",
+        answer_id: str = "",
+    ) -> dict:
+        with self._lock:
+            self._purge()
+            session = self._sessions.get(sid)
+            if not session or session.role != role:
+                raise KeyError(sid)
+            if not session.last_question or not session.last_answer:
+                raise ValueError("Нет ответа для оценки")
+            if answer_id and answer_id != session.last_answer_id:
+                raise ValueError("Этот ответ уже нельзя оценить")
+            if self.feedback_store is None:
+                raise RuntimeError("feedback_disabled")
+            return self.feedback_store.add(
+                session_id=sid,
+                role=role,
+                question=session.last_question,
+                answer=session.last_answer,
+                rating=rating,
+                correction=correction,
+                sources=session.last_sources,
+            )
+
     def start(self, template_id: str | None = None, role: str = "employee") -> dict:
         with self._lock:
             self._purge()
@@ -223,6 +265,8 @@ class Engine:
             if role is not None and s.role != role:
                 raise KeyError(sid)
             s.touched = time.time()
+            # Оценивать можно только последний ответ, показанный до нового сообщения.
+            s.last_question, s.last_answer, s.last_sources, s.last_answer_id = "", "", [], ""
             text = text.strip()
             low = text.lower()
 
@@ -281,10 +325,13 @@ class Engine:
             "sources": sources or [],
             "progress": progress,
             "download_url": f"/api/sessions/{s.id}/document" if download else None,
+            "feedback_available": bool(s.last_question and s.last_answer),
+            "feedback_id": s.last_answer_id if s.last_question and s.last_answer else None,
         }
 
     def _reset(self, s: Session) -> None:
         s.state, s.template_id, s.idx, s.answers, s.pending = "idle", None, 0, {}, None
+        s.last_question, s.last_answer, s.last_sources, s.last_answer_id = "", "", [], ""
         if s.file_path:
             s.file_path.unlink(missing_ok=True)
             s.file_path = None
@@ -316,35 +363,83 @@ class Engine:
     def _answer_core(self, s: Session, q: str) -> tuple[list[str], list[dict], str | None]:
         started = perf_counter()
         status = "ok"
+        corrections = (
+            self.feedback_store.find_corrections(q)
+            if self.feedback_store is not None
+            else []
+        )
         hits = self.vector_search(q, s.role) if self.vector_search else self.kb.search(q, s.role)
         good = [h for h in hits if h.relevance >= self.kb.min_relevance]
+
+        # Если лексический поиск не справился с опечаткой или разговорной
+        # формулировкой, Ollama переформулирует только поисковый запрос.
+        # Сам ответ всё равно строится только по найденным источникам.
+        if not good:
+            expand_query = getattr(self.answerer, "expand_query", None)
+            if expand_query is not None:
+                for alternative in expand_query(q):
+                    alternative_hits = (
+                        self.vector_search(alternative, s.role)
+                        if self.vector_search
+                        else self.kb.search(alternative, s.role)
+                    )
+                    for hit in alternative_hits:
+                        if hit.relevance >= self.kb.min_relevance:
+                            current = next((item for item in good if item.chunk.id == hit.chunk.id), None)
+                            if current is None:
+                                good.append(hit)
+                            elif hit.relevance > current.relevance:
+                                good[good.index(current)] = hit
+                good.sort(key=lambda hit: hit.score, reverse=True)
+                good = good[:3]
+
         log.info("answer sid=%s found=%s", s.id[:8], [h.chunk.id for h in good])  # текст запроса не логируем
         if not good:
-            chat = getattr(self.answerer, "chat", None)
-            if chat is not None:
+            if corrections:
+                answer = "Уточнение по предыдущей обратной связи:\n" + "\n".join(
+                    f"• {item['correction']}" for item in corrections
+                )
+                self._remember_answer(s, q, answer, [])
+                return [answer], [], None
+            general_chat = getattr(self.answerer, "general_chat", None)
+            if general_chat is not None:
                 try:
-                    response = chat(q)
-                    if not is_model_refusal(response):
-                        return [response], [], None
+                    response = general_chat(q)
+                    self._remember_answer(s, q, response, [])
+                    return [response], [], None
                 except Exception:
-                    log.exception("Общий чат AI недоступен, возвращаю ответ по базе")
+                    log.exception("Общий банковский режим Ollama недоступен")
             msg = ("В базе знаний нет информации по этому вопросу. "
                    "Задайте вопрос по инструкции или выберите документ для подготовки.")
             contact = self.kb.meta.get("support_contact")
             if contact:
                 msg += f"\nЗа разъяснением обратитесь: {contact}."
+            self._remember_answer(s, q, msg, [])
             return [msg], [], None
         visible = {t["id"] for t in self._visible(s.role)}
         tpl = next((h.chunk.template for h in good if h.chunk.template in visible), None)
         try:
-            answer = self.answerer.answer(q, good)
+            answer_with_feedback = getattr(self.answerer, "answer_with_feedback", None)
+            if corrections and answer_with_feedback is not None:
+                answer = answer_with_feedback(q, good, corrections)
+            else:
+                answer = self.answerer.answer(q, good)
         except Exception:
             status = "error"
             raise
         finally:
             if self.query_logger:
                 self.query_logger(q, good, (perf_counter() - started) * 1000, status)
-        return [answer], [h.public() for h in good], tpl
+        sources = [h.public() for h in good]
+        self._remember_answer(s, q, answer, sources)
+        return [answer], sources, tpl
+
+    @staticmethod
+    def _remember_answer(s: Session, question: str, answer: str, sources: list[dict]) -> None:
+        s.last_question = question
+        s.last_answer = answer
+        s.last_sources = sources
+        s.last_answer_id = uuid.uuid4().hex
 
     def _on_idle(self, s: Session, text: str) -> dict:
         low = text.lower()
@@ -358,6 +453,18 @@ class Engine:
             return self._to_choose(s, "Не нашёл подходящий шаблон. Выберите из списка:")
         q = f"{s.pending} {text}" if s.pending else text
         s.pending = None
+        if CASUAL_RE.fullmatch(q.strip()):
+            chat = getattr(self.answerer, "chat", None)
+            if chat is not None:
+                try:
+                    response = chat(q)
+                    self._remember_answer(s, q, response, [])
+                    return self._reply(s, [response], [LABEL_PREPARE])
+                except Exception:
+                    log.exception("Ollama small talk недоступен")
+            response = "Здравствуйте! Я могу найти требования в инструкции и подготовить черновик документа."
+            self._remember_answer(s, q, response, [])
+            return self._reply(s, [response], [LABEL_PREPARE])
         if self.kb.is_too_vague(q):
             s.pending = q
             return self._reply(s, ["Уточните, пожалуйста: о каком этапе работы с документом вопрос?"], STAGES)

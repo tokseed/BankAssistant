@@ -27,11 +27,12 @@
 
   function init(savedConfig) {
   savedConfig = savedConfig || {};
-  var queryTheme = new URLSearchParams(window.location.search).get('theme') || '';
   var TITLE = d.title || savedConfig.title || 'Банк';
   var AUTO_OPEN = /^(1|true|yes)$/i.test(d.open || d.autostart || '');
   var FULL_LAYOUT = d.layout === 'full';
-  var selectedTheme = queryTheme || d.theme || savedConfig.theme || 'medium';
+  // Тема страницы не должна влиять на тему виджета. Для виджета используются
+  // только data-theme конкретного embed-кода или настройки чат-бота.
+  var selectedTheme = d.theme || savedConfig.theme || 'medium';
   var THEME = /^(light|dark|medium)$/i.test(selectedTheme) ? selectedTheme.toLowerCase() : 'medium';
   var PALETTE = {
     light:  { bg: '#F8F6F0', panel: '#F8F6F0', surface: '#FFFFFF', text: '#17211D', muted: '#59645E', border: '#DEDCD4', bubble: '#ECEAE2', accent: '#24483F', accentText: '#FFFFFF' },
@@ -63,7 +64,8 @@ header h2{margin:0;font-size:17px;font-weight:700;letter-spacing:.02em;line-heig
 .bar{height:3px;background:var(--pi-border)}\
 .bar i{display:block;height:100%;width:0;background:' + COLOR + ';transition:width .25s}\
 .log{flex:1;overflow-y:auto;padding:18px;display:flex;flex-direction:column;gap:12px;font-size:14px;line-height:1.5}\
-.bot{background:var(--pi-bubble);color:var(--pi-text);border-left:2px solid ' + COLOR + ';padding:12px 14px;max-width:94%;white-space:pre-wrap;overflow-wrap:anywhere;border-radius:2px}\
+.bot-wrap{max-width:94%}.bot{background:var(--pi-bubble);color:var(--pi-text);border-left:2px solid ' + COLOR + ';padding:12px 14px;max-width:100%;white-space:pre-wrap;overflow-wrap:anywhere;border-radius:2px}\
+.feedback{display:flex;align-items:center;gap:6px;margin-top:5px;color:var(--pi-muted);font-size:11px}.feedback button{background:transparent;border:1px solid var(--pi-border);color:var(--pi-muted);border-radius:3px;padding:2px 7px;cursor:pointer}.feedback button:hover{border-color:' + COLOR + ';color:' + COLOR + '}.feedback button:disabled{opacity:.55;cursor:default}\
 .me{align-self:flex-end;background:var(--pi-surface);color:var(--pi-text);border:1px solid var(--pi-border);padding:11px 14px;border-radius:3px;max-width:85%;overflow-wrap:anywhere}\
 .err{color:#a4161a}\
 .chips{display:flex;flex-wrap:wrap;gap:8px}\
@@ -171,6 +173,7 @@ input{font-size:16px}\
   var busy = false;
   var chipBox = null;
   var documentTypesShown = false;
+  var feedbackId = null;
 
   function scroll() { log.scrollTop = log.scrollHeight; }
 
@@ -178,9 +181,42 @@ input{font-size:16px}\
     if (chipBox) { chipBox.remove(); chipBox = null; }
   }
 
-  function addBot(text, isError) {
-    log.appendChild(el('div', { class: 'bot' + (isError ? ' err' : '') }, text));
+  function addBot(text, isError, withFeedback) {
+    var wrap = el('div', { class: 'bot-wrap' });
+    wrap.appendChild(el('div', { class: 'bot' + (isError ? ' err' : '') }, text));
+    if (withFeedback && !isError) addFeedback(wrap);
+    log.appendChild(wrap);
     scroll();
+  }
+
+  function addFeedback(parent) {
+    var box = el('div', { class: 'feedback' });
+    box.appendChild(el('span', null, 'Ответ полезен?'));
+    var yes = el('button', { type: 'button', title: 'Полезный ответ' }, 'Да');
+    var no = el('button', { type: 'button', title: 'Ответ нужно исправить' }, 'Нет');
+    function send(rating, correction) {
+      yes.disabled = true; no.disabled = true;
+      post('/api/sessions/' + sid + '/feedback', {
+        rating: rating,
+        correction: correction || '',
+        answer_id: feedbackId || ''
+      }).then(function (result) {
+        if (!result.ok) throw new Error((result.data && result.data.detail) || 'Не удалось сохранить оценку');
+        box.textContent = result.data.message || 'Спасибо, оценка сохранена.';
+      }).catch(function () {
+        yes.disabled = false; no.disabled = false;
+        box.appendChild(el('span', null, ' Не удалось сохранить.'));
+      });
+    }
+    yes.addEventListener('click', function () { send('positive'); });
+    no.addEventListener('click', function () {
+      var correction = window.prompt('Что было неверно? Напишите правильный вариант или уточнение:');
+      if (correction === null) correction = '';
+      send('negative', correction);
+    });
+    box.appendChild(yes);
+    box.appendChild(no);
+    parent.appendChild(box);
   }
 
   function addMe(text) {
@@ -332,7 +368,10 @@ input{font-size:16px}\
 
   function render(reply) {
     sid = reply.session_id || sid;
-    (reply.messages || []).forEach(function (m) { addBot(m); });
+    feedbackId = reply.feedback_id || null;
+    (reply.messages || []).forEach(function (m, index) {
+      addBot(m, false, Boolean(reply.feedback_available) && index === 0);
+    });
     addDocumentTypes(reply.document_types);
     if (reply.sources && reply.sources.length) addSources(reply.sources);
     if (reply.download_url) addDownload(reply.download_url);
